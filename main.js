@@ -445,17 +445,112 @@ function setupPlanets() {
 }
 
 function setupAsteroidBelt() {
-  var geo = new THREE.BufferGeometry(), count = 4000 * Q | 0;
-  var pos = new Float32Array(count * 3), col = new Float32Array(count * 3);
-  for (var i = 0; i < count; i++) {
-    var r = 36 + Math.random() * 6, angle = Math.random() * Math.PI * 2, y = THREE.Math.randFloatSpread(1.5);
-    pos[i*3] = Math.cos(angle) * r; pos[i*3+1] = y; pos[i*3+2] = Math.sin(angle) * r;
-    var g = 0.45 + Math.random() * 0.25; col[i*3] = g; col[i*3+1] = g * 0.95; col[i*3+2] = g * 0.85;
+  var beltGroup = new THREE.Group();
+  root.add(beltGroup);
+
+  // Radial distribution: main belt 36-42, with density peaks and Kirkwood gaps
+  function beltRadius() {
+    var r = 36 + Math.random() * 6;
+    // Kirkwood gaps at ~37.5 and ~40.5 (simplified)
+    if (Math.abs(r - 37.5) < 0.25 || Math.abs(r - 40.5) < 0.2) r += (Math.random() - 0.5) * 1.2;
+    // Density peak around 38.5-39.5
+    if (Math.random() < 0.3) r = 38.2 + Math.random() * 1.6;
+    return r;
   }
-  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-  asteroidBeltMesh = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.18, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.7, depthWrite: false }));
-  root.add(asteroidBeltMesh);
+
+  // Layer 1: Dense fine dust (many tiny particles)
+  var dustCount = 8000 * Q | 0;
+  var dustGeo = new THREE.BufferGeometry();
+  var dustPos = new Float32Array(dustCount * 3), dustCol = new Float32Array(dustCount * 3);
+  for (var i = 0; i < dustCount; i++) {
+    var r = beltRadius(), a = Math.random() * Math.PI * 2;
+    var ySpread = THREE.Math.randFloatSpread(1.8) * (1 - 0.4 * Math.abs(r - 39) / 3);
+    dustPos[i*3] = Math.cos(a) * r; dustPos[i*3+1] = ySpread; dustPos[i*3+2] = Math.sin(a) * r;
+    var g = 0.38 + Math.random() * 0.18;
+    dustCol[i*3] = g * 1.05; dustCol[i*3+1] = g * 0.98; dustCol[i*3+2] = g * 0.88;
+  }
+  dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+  dustGeo.setAttribute("color", new THREE.BufferAttribute(dustCol, 3));
+  beltGroup.add(new THREE.Points(dustGeo, new THREE.PointsMaterial({
+    size: 0.08, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false
+  })));
+
+  // Layer 2: Medium rocks
+  var medCount = 4000 * Q | 0;
+  var medGeo = new THREE.BufferGeometry();
+  var medPos = new Float32Array(medCount * 3), medCol = new Float32Array(medCount * 3);
+  var rockTints = [[0.55,0.48,0.40],[0.50,0.50,0.48],[0.62,0.55,0.45],[0.45,0.42,0.38],[0.58,0.52,0.44]];
+  for (var i = 0; i < medCount; i++) {
+    var r = beltRadius(), a = Math.random() * Math.PI * 2;
+    var ySpread = THREE.Math.randFloatSpread(2.2) * (1 - 0.3 * Math.abs(r - 39) / 3);
+    medPos[i*3] = Math.cos(a) * r; medPos[i*3+1] = ySpread; medPos[i*3+2] = Math.sin(a) * r;
+    var t = rockTints[i % rockTints.length], v = 0.85 + Math.random() * 0.3;
+    medCol[i*3] = t[0] * v; medCol[i*3+1] = t[1] * v; medCol[i*3+2] = t[2] * v;
+  }
+  medGeo.setAttribute("position", new THREE.BufferAttribute(medPos, 3));
+  medGeo.setAttribute("color", new THREE.BufferAttribute(medCol, 3));
+  beltGroup.add(new THREE.Points(medGeo, new THREE.PointsMaterial({
+    size: 0.22, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false
+  })));
+
+  // Layer 3: Larger rocks (sparse, bigger)
+  var lgCount = 1200 * Q | 0;
+  var lgGeo = new THREE.BufferGeometry();
+  var lgPos = new Float32Array(lgCount * 3), lgCol = new Float32Array(lgCount * 3);
+  for (var i = 0; i < lgCount; i++) {
+    var r = beltRadius(), a = Math.random() * Math.PI * 2;
+    lgPos[i*3] = Math.cos(a) * r; lgPos[i*3+1] = THREE.Math.randFloatSpread(2.8); lgPos[i*3+2] = Math.sin(a) * r;
+    var g = 0.48 + Math.random() * 0.22;
+    lgCol[i*3] = g * 1.1; lgCol[i*3+1] = g; lgCol[i*3+2] = g * 0.85;
+  }
+  lgGeo.setAttribute("position", new THREE.BufferAttribute(lgPos, 3));
+  lgGeo.setAttribute("color", new THREE.BufferAttribute(lgCol, 3));
+  beltGroup.add(new THREE.Points(lgGeo, new THREE.PointsMaterial({
+    size: 0.45, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.65, depthWrite: false
+  })));
+
+  // Layer 4: Subtle dust glow band (additive, gives the belt a soft haze)
+  var glowCount = 3000 * Q | 0;
+  var glowGeo = new THREE.BufferGeometry();
+  var glowPos = new Float32Array(glowCount * 3);
+  for (var i = 0; i < glowCount; i++) {
+    var r = 36.5 + Math.random() * 5, a = Math.random() * Math.PI * 2;
+    glowPos[i*3] = Math.cos(a) * r; glowPos[i*3+1] = THREE.Math.randFloatSpread(1.0); glowPos[i*3+2] = Math.sin(a) * r;
+  }
+  glowGeo.setAttribute("position", new THREE.BufferAttribute(glowPos, 3));
+  beltGroup.add(new THREE.Points(glowGeo, new THREE.PointsMaterial({
+    color: 0xc4a882, size: 1.2, sizeAttenuation: true, transparent: true, opacity: 0.06, depthWrite: false, blending: THREE.AdditiveBlending
+  })));
+
+  // Named asteroids as small meshes: Ceres, Vesta, Pallas, Hygiea
+  var namedAsteroids = [
+    { name: "Ceres", r: 0.28, orbit: 39.2, color: 0x9a9590, roughness: 0.92 },
+    { name: "Vesta", r: 0.16, orbit: 37.8, color: 0xb8a888, roughness: 0.88 },
+    { name: "Pallas", r: 0.15, orbit: 39.8, color: 0x888890, roughness: 0.9 },
+    { name: "Hygiea", r: 0.12, orbit: 40.6, color: 0x706860, roughness: 0.94 },
+  ];
+  for (var ai = 0; ai < namedAsteroids.length; ai++) {
+    var ad = namedAsteroids[ai];
+    var aPivot = new THREE.Object3D();
+    aPivot.rotation.y = Math.random() * Math.PI * 2;
+    beltGroup.add(aPivot);
+    var aAnchor = new THREE.Object3D();
+    aAnchor.position.set(ad.orbit, THREE.Math.randFloatSpread(0.6), 0);
+    aPivot.add(aAnchor);
+    var aMesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(ad.r, 1),
+      new THREE.MeshStandardMaterial({ color: ad.color, roughness: ad.roughness, metalness: 0.04, flatShading: true })
+    );
+    aMesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+    aAnchor.add(aMesh);
+    // Slow orbit (4-6 year period range, scaled)
+    var orbDays = 1600 + ai * 400;
+    planets.push({ def: { name: ad.name, orbitDays: orbDays, spinDays: 0.38, radius: ad.r }, orbitPivot: aPivot, anchor: aAnchor, mesh: aMesh, material: aMesh.material, highlight: 0, spin: Math.random() * 6 });
+    pickables.push(aMesh);
+    aMesh.userData.planet = planets[planets.length - 1];
+  }
+
+  asteroidBeltMesh = beltGroup;
 }
 
 function setupKuiperBelt() {
@@ -917,7 +1012,15 @@ function updateScaleContext() {
   if (solarSystemLabel) solarSystemLabel.material.opacity = Math.pow(gA, 1.3) * (1 - uA * 0.7) * 0.95;
   for (var i = 0; i < nebulaeMeshes.length; i++) nebulaeMeshes[i].material.opacity = Math.pow(gA, 1.5) * (1 - uA * 0.7) * 0.6;
 
-  if (asteroidBeltMesh) asteroidBeltMesh.material.opacity = 0.7 * (1 - gA * 0.9);
+  if (asteroidBeltMesh) {
+    var beltFade = 1 - gA * 0.9;
+    asteroidBeltMesh.traverse(function(child) {
+      if ((child.isMesh || child.isPoints) && child.material.transparent) {
+        if (child.material._baseOp === undefined) child.material._baseOp = child.material.opacity;
+        child.material.opacity = child.material._baseOp * beltFade;
+      }
+    });
+  }
   if (kuiperBeltMesh) kuiperBeltMesh.material.opacity = 0.4 * (1 - gA * 0.9);
 
   if (universeField) universeField.material.opacity = uA * 0.86;
