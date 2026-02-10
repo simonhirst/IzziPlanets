@@ -1,0 +1,110 @@
+:root {
+  --hud-bg: rgba(8, 10, 18, 0.62);
+  --hud-border: rgba(183, 206, 255, 0.32);
+  --hud-text: #eef3ff;
+  --hud-subtext: #b8c6e8;
+  --accent: #95beff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: "Space Grotesk", "Avenir Next", sans-serif;
+  color: var(--hud-text);
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(43, 87, 160, 0.25), transparent 56%),
+    radial-gradient(900px 600px at -20% 115%, rgba(28, 145, 153, 0.22), transparent 60%),
+    #04060d;
+}
+
+#scene {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hud {
+  position: fixed;
+  top: clamp(12px, 2.2vw, 28px);
+  left: clamp(12px, 2.2vw, 28px);
+  width: min(460px, calc(100vw - 24px));
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--hud-border);
+  background: linear-gradient(135deg, var(--hud-bg), rgba(12, 16, 32, 0.5));
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.42);
+  pointer-events: none;
+}
+
+.hud-title {
+  font-size: clamp(1rem, 1.45vw, 1.3rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "Orbitron", "Space Grotesk", sans-serif;
+  font-weight: 700;
+}
+
+.hud-subtitle,
+.hud-hint {
+  margin-top: 8px;
+  line-height: 1.4;
+  font-size: 0.92rem;
+  color: var(--hud-subtext);
+}
+
+.hud-controls {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.hud-controls label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.hud-controls input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.tooltip {
+  position: fixed;
+  transform: translate(10px, 10px);
+  pointer-events: none;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(200, 216, 255, 0.52);
+  background: rgba(9, 13, 24, 0.86);
+  color: #f5f8ff;
+  white-space: nowrap;
+}
+
+.tooltip.hidden {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .hud {
+    padding: 12px 14px;
+  }
+
+  .hud-subtitle,
+  .hud-hint {
+    font-size: 0.8rem;
+  }
+}

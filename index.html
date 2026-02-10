@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Izzi's Solar System Viewer</title>
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <div class="hud">
+      <div class="hud-title">Izzi's Solar System Viewer</div>
+      <div class="hud-subtitle">Hover a planet, then click to shift perspective. Click the same planet again to cycle angles.</div>
+      <div class="hud-controls">
+        <label for="timeScale">Time Warp</label>
+        <input id="timeScale" type="range" min="1" max="120" value="42" />
+      </div>
+      <div class="hud-hint">Drag to orbit camera, scroll to zoom, double-click empty space to reset.</div>
+    </div>
+
+    <div id="tooltip" class="tooltip hidden"></div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
