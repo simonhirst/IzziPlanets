@@ -2,13 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Izzi's Solar System Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Izzi's Universe</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Space+Grotesk:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Space+Grotesk:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
@@ -16,15 +16,44 @@
   <body>
     <canvas id="scene"></canvas>
 
-    <div class="hud">
-      <div class="hud-title">Izzi's Solar System Viewer</div>
-      <div class="hud-subtitle">Hover a planet, then click to shift perspective. Click the same planet again to cycle angles.</div>
-      <div class="hud-controls">
-        <label for="timeScale">Time Warp</label>
+    <!-- Top-left title -->
+    <div class="brand">
+      <div class="brand-title">Izzi's Universe</div>
+      <div class="brand-line"></div>
+    </div>
+
+    <!-- Scale indicator - bottom center -->
+    <div class="scale-bar">
+      <div class="scale-track">
+        <div class="scale-pip" data-label="Sun" style="left: 0%"></div>
+        <div class="scale-pip" data-label="Asteroids" style="left: 18%"></div>
+        <div class="scale-pip" data-label="Kuiper" style="left: 32%"></div>
+        <div class="scale-pip" data-label="Milky Way" style="left: 55%"></div>
+        <div class="scale-pip" data-label="Local Group" style="left: 78%"></div>
+        <div class="scale-pip" data-label="Universe" style="left: 100%"></div>
+        <div class="scale-fill" id="scaleFill"></div>
+        <div class="scale-thumb" id="scaleThumb"></div>
+      </div>
+    </div>
+
+    <!-- Info bar - shows current focus -->
+    <div class="info-bar" id="infoBar">
+      <span class="info-label" id="infoLabel"></span>
+    </div>
+
+    <!-- Controls panel - bottom right -->
+    <div class="controls-panel">
+      <div class="control-group">
+        <label for="timeScale">Time</label>
         <input id="timeScale" type="range" min="0.02" max="6" step="0.01" value="0.35" />
       </div>
-      <div class="hud-hint">Drag to orbit &bull; Scroll to zoom from planets &rarr; asteroid belt &rarr; Milky Way &rarr; Andromeda &amp; beyond &bull; Double-click to reset</div>
+      <button class="btn-reset" id="btnReset" title="Reset view">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8a6 6 0 0 1 10.2-4.3L11 5h4V1l-1.6 1.6A7.5 7.5 0 0 0 .5 8h1.5zm12 0a6 6 0 0 1-10.2 4.3L5 11H1v4l1.6-1.6A7.5 7.5 0 0 0 15.5 8H14z" fill="currentColor"/></svg>
+      </button>
     </div>
+
+    <!-- Planet nav pills - top right -->
+    <div class="planet-nav" id="planetNav"></div>
 
     <div id="tooltip" class="tooltip hidden"></div>
 

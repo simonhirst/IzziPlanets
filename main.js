@@ -1,9 +1,11 @@
 const canvas = document.getElementById("scene");
 const tooltip = document.getElementById("tooltip");
 const timeScaleInput = document.getElementById("timeScale");
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
+const Q = isMobile ? 0.35 : 1; // quality scale for particle counts
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance", logarithmicDepthBuffer: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, alpha: false, powerPreference: "high-performance", logarithmicDepthBuffer: !isMobile });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -306,9 +308,9 @@ function setupLighting() {
 }
 
 function setupBackgroundStars() {
-  addStarLayer(12000, 1200, 36000, 0xdde9ff, 0.9, 0.75);
-  addStarLayer(6000, 30000, 50000, 0xc8d8ff, 0.5, 0.35);
-  var geo = new THREE.BufferGeometry(), n = 2500;
+  addStarLayer(12000 * Q | 0, 1200, 36000, 0xdde9ff, 0.9, 0.75);
+  addStarLayer(6000 * Q | 0, 30000, 50000, 0xc8d8ff, 0.5, 0.35);
+  var geo = new THREE.BufferGeometry(), n = 2500 * Q | 0;
   var pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
   var tints = [new THREE.Color(0xff8866), new THREE.Color(0xffcc88), new THREE.Color(0x88aaff), new THREE.Color(0xaaccff)];
   for (var i = 0; i < n; i++) {
@@ -436,7 +438,7 @@ function setupPlanets() {
 }
 
 function setupAsteroidBelt() {
-  var geo = new THREE.BufferGeometry(), count = 4000;
+  var geo = new THREE.BufferGeometry(), count = 4000 * Q | 0;
   var pos = new Float32Array(count * 3), col = new Float32Array(count * 3);
   for (var i = 0; i < count; i++) {
     var r = 36 + Math.random() * 6, angle = Math.random() * Math.PI * 2, y = THREE.Math.randFloatSpread(1.5);
@@ -450,7 +452,8 @@ function setupAsteroidBelt() {
 }
 
 function setupKuiperBelt() {
-  var geo = new THREE.BufferGeometry(), count = 3000, pos = new Float32Array(count * 3);
+  var kCount = 3000 * Q | 0;
+  var geo = new THREE.BufferGeometry(), count = kCount, pos = new Float32Array(count * 3);
   for (var i = 0; i < count; i++) {
     var r = 95 + Math.random() * 40, angle = Math.random() * Math.PI * 2;
     pos[i*3] = Math.cos(angle) * r; pos[i*3+1] = THREE.Math.randFloatSpread(3); pos[i*3+2] = Math.sin(angle) * r;
@@ -481,7 +484,7 @@ function setupMilkyWay() {
   galaxyGroup.rotation.set(THREE.Math.degToRad(26), THREE.Math.degToRad(-14), THREE.Math.degToRad(8));
   scene.add(galaxyGroup);
 
-  var armCount = 56000, armPos = new Float32Array(armCount * 3), armCol = new Float32Array(armCount * 3);
+  var armCount = 56000 * Q | 0, armPos = new Float32Array(armCount * 3), armCol = new Float32Array(armCount * 3);
   var warm = new THREE.Color(0xffe6bc), cool = new THREE.Color(0x90b9ff);
   for (var i = 0; i < armCount; i++) {
     var armIndex = i % 4, basePhase = armIndex * (Math.PI / 2);
@@ -500,7 +503,7 @@ function setupMilkyWay() {
   galaxyGroup.add(milkyWayBand);
 
   // Galactic center bar
-  var barGeo = new THREE.BufferGeometry(), barCount = 6000;
+  var barGeo = new THREE.BufferGeometry(), barCount = 6000 * Q | 0;
   var barPos = new Float32Array(barCount * 3), barCol = new Float32Array(barCount * 3);
   for (var i = 0; i < barCount; i++) {
     var t = (Math.random() - 0.5) * 2;
@@ -581,7 +584,7 @@ function setupMilkyWay() {
 
 function setupUniverse() {
   universeGroup = new THREE.Group(); scene.add(universeGroup);
-  var fieldCount = 160000, fieldPos = new Float32Array(fieldCount * 3), fieldCol = new Float32Array(fieldCount * 3);
+  var fieldCount = 160000 * Q | 0, fieldPos = new Float32Array(fieldCount * 3), fieldCol = new Float32Array(fieldCount * 3);
   var violet = new THREE.Color(0xb7bcff), amber = new THREE.Color(0xffd2a8), cyan = new THREE.Color(0xa3d7ff);
   for (var i = 0; i < fieldCount; i++) {
     var r = 220000 + Math.pow(Math.random(), 0.56) * UNIVERSE_RADIUS;
@@ -597,7 +600,7 @@ function setupUniverse() {
   universeGroup.add(universeField);
 
   // Cosmic web filaments
-  var webGeo = new THREE.BufferGeometry(), webCount = 20000, webPos = new Float32Array(webCount * 3);
+  var webGeo = new THREE.BufferGeometry(), webCount = 20000 * Q | 0, webPos = new Float32Array(webCount * 3);
   var filaments = [];
   for (var f = 0; f < 80; f++) {
     var th1 = Math.random() * Math.PI * 2, ph1 = Math.acos(THREE.Math.randFloatSpread(2));
@@ -638,9 +641,10 @@ function setupUniverse() {
     group.rotation.set(gd.tilt, Math.random() * Math.PI * 2, Math.random() * 0.5);
 
     var gGeo = new THREE.BufferGeometry();
-    var gPos = new Float32Array(gd.particles * 3), gCol = new Float32Array(gd.particles * 3);
+    var gPCount = gd.particles * Q | 0;
+    var gPos = new Float32Array(gPCount * 3), gCol = new Float32Array(gPCount * 3);
     var baseCol = new THREE.Color(gd.color);
-    for (var pi = 0; pi < gd.particles; pi++) {
+    for (var pi = 0; pi < gPCount; pi++) {
       var x, y, z;
       if (gd.irregular) {
         var gr = Math.random() * gd.size * 0.5, ga = Math.random() * Math.PI * 2;
@@ -775,7 +779,10 @@ function setupEvents() {
   });
   canvas.addEventListener("pointerleave", function() { pointerInside = false; hoveredPlanet = null; tooltip.classList.add("hidden"); pointerNdc.set(9, 9); });
   canvas.addEventListener("dblclick", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
-  window.addEventListener("resize", function() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+  var onResize = function() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+  window.addEventListener("resize", onResize);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
+  document.addEventListener("touchmove", function(e) { if (e.target === canvas) e.preventDefault(); }, { passive: false });
 }
 
 function updatePointer(e) {
