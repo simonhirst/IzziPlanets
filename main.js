@@ -386,13 +386,22 @@ function setupPlanets() {
 
     if (def.ring) {
       var ringMat;
+      var ringGeo = new THREE.RingGeometry(def.ring.inner, def.ring.outer, 200, 8);
+      // Fix UVs: remap from 2D projection to radial (U = inner→outer, V = 0.5)
+      var ringUvs = ringGeo.attributes.uv;
+      var ringPositions = ringGeo.attributes.position;
+      for (var ri = 0; ri < ringUvs.count; ri++) {
+        var rx = ringPositions.getX(ri), ry = ringPositions.getY(ri);
+        var rr = Math.sqrt(rx * rx + ry * ry);
+        ringUvs.setXY(ri, (rr - def.ring.inner) / (def.ring.outer - def.ring.inner), 0.5);
+      }
       if (def.name === "Saturn") {
         var ringTex = createSaturnRingTexture();
-        ringMat = new THREE.MeshStandardMaterial({ map: ringTex, side: THREE.DoubleSide, transparent: true, opacity: 0.88, roughness: 0.9, metalness: 0.02, alphaMap: ringTex });
+        ringMat = new THREE.MeshBasicMaterial({ map: ringTex, side: THREE.DoubleSide, transparent: true, depthWrite: false });
       } else {
         ringMat = new THREE.MeshStandardMaterial({ color: def.ring.color || 0x667788, side: THREE.DoubleSide, transparent: true, opacity: def.ring.opacity || 0.3, roughness: 0.9, metalness: 0.02 });
       }
-      var ring = new THREE.Mesh(new THREE.RingGeometry(def.ring.inner, def.ring.outer, 200), ringMat);
+      var ring = new THREE.Mesh(ringGeo, ringMat);
       ring.rotation.x = Math.PI / 2; ring.rotation.y = THREE.Math.degToRad(12);
       planetMesh.add(ring);
     }
