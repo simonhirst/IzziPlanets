@@ -133,6 +133,20 @@ const defs = [
 /* ---- Procedural Textures ---- */
 function makeCanvas(w, h) { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; }
 
+var _particleTex = null;
+function getParticleTexture() {
+  if (_particleTex) return _particleTex;
+  var c = makeCanvas(64, 64), ctx = c.getContext("2d");
+  var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.25, "rgba(255,255,255,0.85)");
+  g.addColorStop(0.5, "rgba(255,255,255,0.35)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+  _particleTex = new THREE.CanvasTexture(c);
+  return _particleTex;
+}
+
 function createMercuryTexture() {
   const c = makeCanvas(512, 256), ctx = c.getContext("2d");
   ctx.fillStyle = "#8a8d92"; ctx.fillRect(0, 0, 512, 256);
@@ -471,8 +485,9 @@ function setupAsteroidBelt() {
   }
   dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
   dustGeo.setAttribute("color", new THREE.BufferAttribute(dustCol, 3));
+  var pTex = getParticleTexture();
   beltGroup.add(new THREE.Points(dustGeo, new THREE.PointsMaterial({
-    size: 0.08, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false
+    size: 0.12, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false, map: pTex
   })));
 
   // Layer 2: Medium rocks
@@ -490,7 +505,7 @@ function setupAsteroidBelt() {
   medGeo.setAttribute("position", new THREE.BufferAttribute(medPos, 3));
   medGeo.setAttribute("color", new THREE.BufferAttribute(medCol, 3));
   beltGroup.add(new THREE.Points(medGeo, new THREE.PointsMaterial({
-    size: 0.22, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false
+    size: 0.3, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false, map: pTex
   })));
 
   // Layer 3: Larger rocks (sparse, bigger)
@@ -506,7 +521,7 @@ function setupAsteroidBelt() {
   lgGeo.setAttribute("position", new THREE.BufferAttribute(lgPos, 3));
   lgGeo.setAttribute("color", new THREE.BufferAttribute(lgCol, 3));
   beltGroup.add(new THREE.Points(lgGeo, new THREE.PointsMaterial({
-    size: 0.45, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.65, depthWrite: false
+    size: 0.6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.65, depthWrite: false, map: pTex
   })));
 
   // Layer 4: Subtle dust glow band (additive, gives the belt a soft haze)
@@ -519,7 +534,7 @@ function setupAsteroidBelt() {
   }
   glowGeo.setAttribute("position", new THREE.BufferAttribute(glowPos, 3));
   beltGroup.add(new THREE.Points(glowGeo, new THREE.PointsMaterial({
-    color: 0xc4a882, size: 1.2, sizeAttenuation: true, transparent: true, opacity: 0.06, depthWrite: false, blending: THREE.AdditiveBlending
+    color: 0xc4a882, size: 1.8, sizeAttenuation: true, transparent: true, opacity: 0.06, depthWrite: false, blending: THREE.AdditiveBlending, map: pTex
   })));
 
   // Named asteroids as small meshes: Ceres, Vesta, Pallas, Hygiea
@@ -538,8 +553,8 @@ function setupAsteroidBelt() {
     aAnchor.position.set(ad.orbit, THREE.Math.randFloatSpread(0.6), 0);
     aPivot.add(aAnchor);
     var aMesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(ad.r, 1),
-      new THREE.MeshStandardMaterial({ color: ad.color, roughness: ad.roughness, metalness: 0.04, flatShading: true })
+      new THREE.IcosahedronGeometry(ad.r, 3),
+      new THREE.MeshStandardMaterial({ color: ad.color, roughness: ad.roughness, metalness: 0.04 })
     );
     aMesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
     aAnchor.add(aMesh);
