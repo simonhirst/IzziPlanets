@@ -1,6 +1,12 @@
 const canvas = document.getElementById("scene");
 const tooltip = document.getElementById("tooltip");
 const timeScaleInput = document.getElementById("timeScale");
+const scaleFill = document.getElementById("scaleFill");
+const scaleThumb = document.getElementById("scaleThumb");
+const infoBar = document.getElementById("infoBar");
+const infoLabel = document.getElementById("infoLabel");
+const btnReset = document.getElementById("btnReset");
+const planetNav = document.getElementById("planetNav");
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const Q = isMobile ? 0.35 : 1; // quality scale for particle counts
 
@@ -298,6 +304,7 @@ setupPlanets();
 setupAsteroidBelt();
 setupKuiperBelt();
 setupEvents();
+setupUI();
 loadEarthAssets();
 animate();
 
@@ -761,6 +768,71 @@ function makeTextSprite(text) {
   return sprite;
 }
 
+/* ---- UI ---- */
+function setupUI() {
+  // Planet nav pills
+  var navNames = ["Mercury","Venus","Earth","Mars","Jupiter","Saturn","Uranus","Neptune"];
+  for (var i = 0; i < navNames.length; i++) {
+    (function(name) {
+      var pill = document.createElement("button");
+      pill.className = "planet-pill";
+      pill.textContent = name;
+      pill.addEventListener("click", function() {
+        for (var p = 0; p < planets.length; p++) {
+          if (planets[p].def.name === name) { focusPlanet(planets[p]); break; }
+        }
+      });
+      planetNav.appendChild(pill);
+    })(navNames[i]);
+  }
+}
+
+function updateUI() {
+  var dist = camera.position.distanceTo(controls.target);
+  // Scale bar position: map camera distance to 0-100%
+  // Sun ~2-50, Asteroids ~50-200, Kuiper ~200-900, Milky Way ~900-18000, Local Group ~18000-2600000, Universe ~2600000+
+  var pct = 0;
+  if (dist < 50) pct = (dist / 50) * 18;
+  else if (dist < 200) pct = 18 + ((dist - 50) / 150) * 14;
+  else if (dist < GALAXY_REVEAL_START) pct = 32 + ((dist - 200) / (GALAXY_REVEAL_START - 200)) * 23;
+  else if (dist < UNIVERSE_REVEAL_START) pct = 55 + ((dist - GALAXY_REVEAL_START) / (UNIVERSE_REVEAL_START - GALAXY_REVEAL_START)) * 23;
+  else if (dist < UNIVERSE_REVEAL_FULL) pct = 78 + ((dist - UNIVERSE_REVEAL_START) / (UNIVERSE_REVEAL_FULL - UNIVERSE_REVEAL_START)) * 22;
+  else pct = 100;
+  pct = Math.min(100, Math.max(0, pct));
+  if (scaleFill) scaleFill.style.width = pct + "%";
+  if (scaleThumb) scaleThumb.style.left = pct + "%";
+
+  // Info bar: show context label
+  var label = "";
+  if (selectedPlanet) {
+    label = selectedPlanet.def.name;
+  } else if (dist > UNIVERSE_REVEAL_FULL * 0.5) {
+    label = "Observable Universe";
+  } else if (dist > UNIVERSE_REVEAL_START) {
+    label = "Local Group";
+  } else if (dist > GALAXY_REVEAL_FULL * 0.5) {
+    label = "Milky Way Galaxy";
+  } else if (dist > GALAXY_REVEAL_START) {
+    label = "Orion Arm";
+  } else if (dist > 200) {
+    label = "Outer Solar System";
+  } else if (dist > 50) {
+    label = "Inner Solar System";
+  }
+  if (infoLabel) infoLabel.textContent = label;
+  if (infoBar) {
+    if (label) infoBar.classList.add("visible");
+    else infoBar.classList.remove("visible");
+  }
+
+  // Planet pill active state
+  var pills = planetNav ? planetNav.querySelectorAll(".planet-pill") : [];
+  for (var i = 0; i < pills.length; i++) {
+    if (selectedPlanet && pills[i].textContent === selectedPlanet.def.name) pills[i].classList.add("active");
+    else pills[i].classList.remove("active");
+  }
+}
+
 /* ---- Events ---- */
 function setupEvents() {
   controls.addEventListener("start", function() { controlsDragging = true; canvas.style.cursor = "grabbing"; });
@@ -779,6 +851,7 @@ function setupEvents() {
   });
   canvas.addEventListener("pointerleave", function() { pointerInside = false; hoveredPlanet = null; tooltip.classList.add("hidden"); pointerNdc.set(9, 9); });
   canvas.addEventListener("dblclick", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
+  if (btnReset) btnReset.addEventListener("click", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
   var onResize = function() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
   window.addEventListener("resize", onResize);
   if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
@@ -902,6 +975,7 @@ function animate(now) {
   }
 
   updateScaleContext();
+  updateUI();
   controls.autoRotate = !selectedPlanet && !cameraTween && !controlsDragging;
   controls.update();
   renderer.render(scene, camera);
