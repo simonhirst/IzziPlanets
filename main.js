@@ -49,7 +49,15 @@ const pointerPx = new THREE.Vector2();
 const clock = new THREE.Clock();
 let pointerInside = false, hoveredPlanet = null, selectedPlanet = null, selectedAngleIndex = 0;
 let controlsDragging = false, cameraTween = null, pointerDownPos = null;
-let timeWarp = Number(timeScaleInput.value || 0.35);
+
+// Exponential slider mapping: 0-100 → 0.01 to 365 sim-days/sec
+// Gives fine control at slow speeds and big range at high speeds
+function sliderToTimeWarp(v) {
+  if (v <= 0) return 0.01;
+  return 0.01 * Math.pow(36500, v / 100);
+}
+var timeWarpTarget = sliderToTimeWarp(Number(timeScaleInput.value));
+var timeWarp = timeWarpTarget;
 const selectedCameraOffset = new THREE.Vector3();
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
 const defaultCamPos = new THREE.Vector3(0, 40, 170);
@@ -951,7 +959,7 @@ function setupEvents() {
     if (selectedPlanet) selectedCameraOffset.copy(camera.position).sub(controls.target);
     canvas.style.cursor = hoveredPlanet ? "pointer" : "grab";
   });
-  timeScaleInput.addEventListener("input", function() { timeWarp = Number(timeScaleInput.value || 0.35); });
+  timeScaleInput.addEventListener("input", function() { timeWarpTarget = sliderToTimeWarp(Number(timeScaleInput.value)); });
   canvas.addEventListener("pointermove", function(e) { pointerInside = true; pointerPx.set(e.clientX, e.clientY); updatePointer(e); });
   canvas.addEventListener("pointerdown", function(e) { pointerDownPos = new THREE.Vector2(e.clientX, e.clientY); updatePointer(e); });
   canvas.addEventListener("pointerup", function(e) {
@@ -1058,7 +1066,9 @@ function updateScaleContext() {
 function animate(now) {
   requestAnimationFrame(animate);
   var dt = Math.min(clock.getDelta(), 0.05);
-  var simDays = dt * timeWarp * 0.55;
+  // Smooth interpolation toward target speed — prevents jerky jumps
+  timeWarp += (timeWarpTarget - timeWarp) * (1 - Math.exp(-dt * 8));
+  var simDays = dt * timeWarp;
   updateHover();
   updateCameraTween(now || 0);
 
@@ -1068,7 +1078,7 @@ function animate(now) {
     var spinSign = Math.sign(p.def.spinDays) || 1;
     p.spin += ((Math.PI * 2 * simDays) / Math.abs(p.def.spinDays)) * spinSign;
     p.mesh.rotation.y = p.spin;
-    if (p.clouds) p.clouds.rotation.y += dt * timeWarp * 0.09;
+    if (p.clouds) p.clouds.rotation.y += simDays * 0.15;
     if (p.atmosphere) p.atmosphere.rotation.y += dt * 0.02;
     var h = hoveredPlanet === p ? 1 : selectedPlanet === p ? 0.7 : 0;
     p.highlight += (h - p.highlight) * (1 - Math.exp(-dt * 10));

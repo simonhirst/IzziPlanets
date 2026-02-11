@@ -18,8 +18,12 @@
 
     <!-- Top-left title -->
     <div class="brand">
-      <div class="brand-title">Izzi's Universe</div>
+      <div class="brand-title">
+        <span class="brand-izzi">Izzi's</span>
+        <span class="brand-universe">Universe</span>
+      </div>
       <div class="brand-line"></div>
+      <div class="brand-version">v0.3</div>
     </div>
 
     <!-- Scale indicator - bottom center -->
@@ -45,7 +49,7 @@
     <div class="controls-panel">
       <div class="control-group">
         <label for="timeScale">Time</label>
-        <input id="timeScale" type="range" min="0.02" max="6" step="0.01" value="0.35" />
+        <input id="timeScale" type="range" min="0" max="100" step="1" value="30" />
       </div>
       <button class="btn-reset" id="btnReset" title="Reset view">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8a6 6 0 0 1 10.2-4.3L11 5h4V1l-1.6 1.6A7.5 7.5 0 0 0 .5 8h1.5zm12 0a6 6 0 0 1-10.2 4.3L5 11H1v4l1.6-1.6A7.5 7.5 0 0 0 15.5 8H14z" fill="currentColor"/></svg>
