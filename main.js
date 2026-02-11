@@ -1,6 +1,7 @@
 const canvas = document.getElementById("scene");
 const tooltip = document.getElementById("tooltip");
 const timeScaleInput = document.getElementById("timeScale");
+const positionModeInput = document.getElementById("positionMode");
 const scaleFill = document.getElementById("scaleFill");
 const scaleThumb = document.getElementById("scaleThumb");
 const infoBar = document.getElementById("infoBar");
@@ -52,12 +53,16 @@ let controlsDragging = false, cameraTween = null, pointerDownPos = null;
 
 // Exponential slider mapping: 0-100 → 0.01 to 365 sim-days/sec
 // Gives fine control at slow speeds and big range at high speeds
+const POSITION_MODE_SIM = "sim";
+const POSITION_MODE_LIVE = "live";
+
 function sliderToTimeWarp(v) {
   if (v <= 0) return 0.01;
   return 0.01 * Math.pow(36500, v / 100);
 }
 var timeWarpTarget = sliderToTimeWarp(Number(timeScaleInput.value));
 var timeWarp = timeWarpTarget;
+var positionMode = positionModeInput ? positionModeInput.value : POSITION_MODE_SIM;
 const selectedCameraOffset = new THREE.Vector3();
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
 const defaultCamPos = new THREE.Vector3(0, 40, 170);
@@ -315,6 +320,20 @@ function createNeptuneTexture() {
 
 const textureMakers = { Mercury: createMercuryTexture, Venus: createVenusTexture, Mars: createMarsTexture,
   Jupiter: createJupiterTexture, Saturn: createSaturnTexture, Uranus: createUranusTexture, Neptune: createNeptuneTexture };
+
+// Approximate heliocentric orbital elements (Paul Schlyter low-precision model).
+// Days are measured from JD 2451543.5 (2000-01-00 00:00 UTC).
+const ORBITAL_ELEMENTS = {
+  Mercury: { N0: 48.3313, N1: 3.24587e-5, i0: 7.0047, i1: 5.0e-8, w0: 29.1241, w1: 1.01444e-5, a0: 0.387098, a1: 0, e0: 0.205635, e1: 5.59e-10, M0: 168.6562, M1: 4.0923344368 },
+  Venus: { N0: 76.6799, N1: 2.4659e-5, i0: 3.3946, i1: 2.75e-8, w0: 54.891, w1: 1.38374e-5, a0: 0.72333, a1: 0, e0: 0.006773, e1: -1.302e-9, M0: 48.0052, M1: 1.6021302244 },
+  Earth: { N0: 0, N1: 0, i0: 0, i1: 0, w0: 282.9404, w1: 4.70935e-5, a0: 1.0, a1: 0, e0: 0.016709, e1: -1.151e-9, M0: 356.047, M1: 0.9856002585 },
+  Mars: { N0: 49.5574, N1: 2.11081e-5, i0: 1.8497, i1: -1.78e-8, w0: 286.5016, w1: 2.92961e-5, a0: 1.523688, a1: 0, e0: 0.093405, e1: 2.516e-9, M0: 18.6021, M1: 0.5240207766 },
+  Jupiter: { N0: 100.4542, N1: 2.76854e-5, i0: 1.303, i1: -1.557e-7, w0: 273.8777, w1: 1.64505e-5, a0: 5.20256, a1: 0, e0: 0.048498, e1: 4.469e-9, M0: 19.895, M1: 0.0830853001 },
+  Saturn: { N0: 113.6634, N1: 2.3898e-5, i0: 2.4886, i1: -1.081e-7, w0: 339.3939, w1: 2.97661e-5, a0: 9.55475, a1: 0, e0: 0.055546, e1: -9.499e-9, M0: 316.967, M1: 0.0334442282 },
+  Uranus: { N0: 74.0005, N1: 1.3978e-5, i0: 0.7733, i1: 1.9e-8, w0: 96.6612, w1: 3.0565e-5, a0: 19.18171, a1: -1.55e-8, e0: 0.047318, e1: 7.45e-9, M0: 142.5905, M1: 0.011725806 },
+  Neptune: { N0: 131.7806, N1: 3.0173e-5, i0: 1.77, i1: -2.55e-7, w0: 272.8461, w1: -6.027e-6, a0: 30.05826, a1: 3.313e-8, e0: 0.008606, e1: 2.15e-9, M0: 260.2471, M1: 0.005995147 },
+  Pluto: { N0: 110.30347, N1: 0, i0: 17.14175, i1: 0, w0: 113.76329, w1: 0, a0: 39.48168677, a1: 0, e0: 0.24880766, e1: 0, M0: 14.53, M1: 0.0039757 },
+};
 
 /* ---- Init ---- */
 setupLighting();
@@ -886,6 +905,72 @@ function makeTextSprite(text) {
   return sprite;
 }
 
+function degToRad(d) { return d * Math.PI / 180; }
+function normalizeDeg(d) {
+  var n = d % 360;
+  return n < 0 ? n + 360 : n;
+}
+function julianDayFromUnixMs(ms) {
+  return ms / 86400000 + 2440587.5;
+}
+function solveEccentricAnomaly(M, e) {
+  var E = M + e * Math.sin(M) * (1 + e * Math.cos(M));
+  for (var i = 0; i < 7; i++) E = E - (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+  return E;
+}
+function getHeliocentricCoordsAU(name, d) {
+  var el = ORBITAL_ELEMENTS[name];
+  if (!el) return null;
+
+  var N = degToRad(normalizeDeg(el.N0 + el.N1 * d));
+  var i = degToRad(el.i0 + el.i1 * d);
+  var w = degToRad(normalizeDeg(el.w0 + el.w1 * d));
+  var a = el.a0 + el.a1 * d;
+  var e = el.e0 + el.e1 * d;
+  var M = degToRad(normalizeDeg(el.M0 + el.M1 * d));
+  var E = solveEccentricAnomaly(M, e);
+
+  var xv = a * (Math.cos(E) - e);
+  var yv = a * Math.sqrt(1 - e * e) * Math.sin(E);
+  var v = Math.atan2(yv, xv);
+  var r = Math.sqrt(xv * xv + yv * yv);
+  var vw = v + w;
+
+  var xh = r * (Math.cos(N) * Math.cos(vw) - Math.sin(N) * Math.sin(vw) * Math.cos(i));
+  var yh = r * (Math.sin(N) * Math.cos(vw) + Math.cos(N) * Math.sin(vw) * Math.cos(i));
+  var zh = r * (Math.sin(vw) * Math.sin(i));
+  return { x: xh, y: yh, z: zh, a: el.a0 };
+}
+function applyLivePlanetPositions(unixMs) {
+  var d = julianDayFromUnixMs(unixMs) - 2451543.5;
+  for (var i = 0; i < planets.length; i++) {
+    var p = planets[i];
+    var coords = getHeliocentricCoordsAU(p.def.name, d);
+    if (!coords) continue;
+    var scale = p.def.orbitRadius / coords.a;
+    p.anchor.position.set(coords.x * scale, coords.z * scale, coords.y * scale);
+    p.orbitPivot.rotation.y = 0;
+  }
+}
+function setPositionMode(mode) {
+  positionMode = mode === POSITION_MODE_LIVE ? POSITION_MODE_LIVE : POSITION_MODE_SIM;
+  if (timeScaleInput) timeScaleInput.disabled = positionMode === POSITION_MODE_LIVE;
+
+  if (positionMode === POSITION_MODE_LIVE) {
+    applyLivePlanetPositions(Date.now());
+    return;
+  }
+
+  for (var i = 0; i < planets.length; i++) {
+    var p = planets[i];
+    var hadLiveCoords = !!ORBITAL_ELEMENTS[p.def.name];
+    if (!hadLiveCoords) continue;
+    var angle = Math.atan2(p.anchor.position.z, p.anchor.position.x);
+    p.anchor.position.set(p.def.orbitRadius, 0, 0);
+    if (!Number.isNaN(angle)) p.orbitPivot.rotation.y = angle;
+  }
+}
+
 /* ---- UI ---- */
 function setupUI() {
   // Planet nav — ordered by distance from Sun with AU values
@@ -978,6 +1063,9 @@ function setupEvents() {
     canvas.style.cursor = hoveredPlanet ? "pointer" : "grab";
   });
   timeScaleInput.addEventListener("input", function() { timeWarpTarget = sliderToTimeWarp(Number(timeScaleInput.value)); });
+  if (positionModeInput) {
+    positionModeInput.addEventListener("change", function() { setPositionMode(positionModeInput.value); });
+  }
   canvas.addEventListener("pointermove", function(e) { pointerInside = true; pointerPx.set(e.clientX, e.clientY); updatePointer(e); });
   canvas.addEventListener("pointerdown", function(e) { pointerDownPos = new THREE.Vector2(e.clientX, e.clientY); updatePointer(e); });
   canvas.addEventListener("pointerup", function(e) {
@@ -1084,18 +1172,31 @@ function updateScaleContext() {
 function animate(now) {
   requestAnimationFrame(animate);
   var dt = Math.min(clock.getDelta(), 0.05);
-  // Smooth interpolation toward target speed — prevents jerky jumps
-  timeWarp += (timeWarpTarget - timeWarp) * (1 - Math.exp(-dt * 8));
-  var simDays = dt * timeWarp;
+  var nowMs = Date.now();
+  var simDays = 0;
+  if (positionMode === POSITION_MODE_SIM) {
+    // Smooth interpolation toward target speed — prevents jerky jumps
+    timeWarp += (timeWarpTarget - timeWarp) * (1 - Math.exp(-dt * 8));
+    simDays = dt * timeWarp;
+  } else {
+    applyLivePlanetPositions(nowMs);
+  }
   updateHover();
   updateCameraTween(now || 0);
 
   for (var i = 0; i < planets.length; i++) {
     var p = planets[i];
-    p.orbitPivot.rotation.y += (Math.PI * 2 * simDays) / p.def.orbitDays;
-    var spinSign = Math.sign(p.def.spinDays) || 1;
-    p.spin += ((Math.PI * 2 * simDays) / Math.abs(p.def.spinDays)) * spinSign;
-    p.mesh.rotation.y = p.spin;
+    if (positionMode === POSITION_MODE_SIM || !ORBITAL_ELEMENTS[p.def.name]) {
+      p.orbitPivot.rotation.y += (Math.PI * 2 * simDays) / p.def.orbitDays;
+      var spinSign = Math.sign(p.def.spinDays) || 1;
+      p.spin += ((Math.PI * 2 * simDays) / Math.abs(p.def.spinDays)) * spinSign;
+      p.mesh.rotation.y = p.spin;
+    } else {
+      var spinSignLive = Math.sign(p.def.spinDays) || 1;
+      var rotCycles = (nowMs / 86400000) / Math.abs(p.def.spinDays);
+      var spin = (rotCycles - Math.floor(rotCycles)) * Math.PI * 2;
+      p.mesh.rotation.y = spin * spinSignLive;
+    }
     if (p.clouds) p.clouds.rotation.y += simDays * 0.15;
     if (p.atmosphere) p.atmosphere.rotation.y += dt * 0.02;
     var h = hoveredPlanet === p ? 1 : selectedPlanet === p ? 0.7 : 0;
@@ -1107,9 +1208,17 @@ function animate(now) {
 
   for (var i = 0; i < allMoonRefs.length; i++) {
     var m = allMoonRefs[i];
-    m.orbitPivot.rotation.y += (m.retrograde ? -1 : 1) * (Math.PI * 2 * simDays) / m.orbitDays;
-    m.spin += (Math.PI * 2 * simDays) / m.spinDays;
-    m.mesh.rotation.y = m.spin;
+    if (positionMode === POSITION_MODE_SIM) {
+      m.orbitPivot.rotation.y += (m.retrograde ? -1 : 1) * (Math.PI * 2 * simDays) / m.orbitDays;
+      m.spin += (Math.PI * 2 * simDays) / m.spinDays;
+      m.mesh.rotation.y = m.spin;
+    } else {
+      var moonDir = m.retrograde ? -1 : 1;
+      var moonOrbCycles = (nowMs / 86400000) / m.orbitDays;
+      m.orbitPivot.rotation.y = moonDir * (moonOrbCycles - Math.floor(moonOrbCycles)) * Math.PI * 2;
+      var moonSpinCycles = (nowMs / 86400000) / m.spinDays;
+      m.mesh.rotation.y = (moonSpinCycles - Math.floor(moonSpinCycles)) * Math.PI * 2;
+    }
   }
 
   if (selectedPlanet && !cameraTween) {
@@ -1126,3 +1235,5 @@ function animate(now) {
   controls.update();
   renderer.render(scene, camera);
 }
+
+setPositionMode(positionMode);
