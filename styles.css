@@ -42,13 +42,13 @@ html, body {
 .brand-title {
   font-family: var(--font-display);
   font-weight: 900;
-  font-size: clamp(1.05rem, 2vw, 1.5rem);
+  font-size: clamp(1.35rem, 2.8vw, 2rem);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   line-height: 1.1;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .brand-izzi {
@@ -68,8 +68,8 @@ html, body {
 }
 
 .brand-line {
-  margin-top: 8px;
-  width: 64px; height: 1px;
+  margin-top: 10px;
+  width: 80px; height: 1px;
   background: linear-gradient(90deg, rgba(126, 170, 255, 0.6), rgba(126, 170, 255, 0.08), transparent);
   border-radius: 1px;
   position: relative;
@@ -329,8 +329,8 @@ html, body {
 .planet-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px 5px 14px;
+  gap: 10px;
+  padding: 6px 10px 6px 16px;
   background: none;
   border: none;
   cursor: pointer;
@@ -341,9 +341,9 @@ html, body {
 
 .planet-dot {
   position: absolute;
-  left: -1px;
-  width: 7px;
-  height: 7px;
+  left: -3px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--dot-color, #888);
   box-shadow: 0 0 6px rgba(126, 170, 255, 0.3);
@@ -352,7 +352,7 @@ html, body {
 }
 
 .planet-name {
-  font-size: 0.6rem;
+  font-size: 0.62rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--hud-subtext);
@@ -419,8 +419,8 @@ html, body {
 /* ----  Mobile  ---- */
 @media (max-width: 640px) {
   .brand { top: 12px; left: 14px; }
-  .brand-title { font-size: 0.85rem; }
-  .brand-line { width: 48px; }
+  .brand-title { font-size: 1.1rem; }
+  .brand-line { width: 56px; }
   .brand-version { font-size: 0.45rem; }
 
   .scale-bar {
@@ -434,10 +434,27 @@ html, body {
   .info-label { font-size: 0.65rem; }
 
   .controls-panel {
-    bottom: 56px; right: 12px;
+    bottom: auto;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    flex-direction: column;
+    gap: 8px;
   }
 
-  .control-group input[type="range"] { width: 70px; }
+  .control-group {
+    flex-direction: column;
+    padding: 8px 6px;
+    gap: 6px;
+  }
+
+  .control-group input[type="range"] {
+    width: 80px;
+    transform: rotate(-90deg);
+    transform-origin: center center;
+    margin: 30px 0;
+  }
+
   .control-group input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -8.5px; }
 
   .planet-nav {
@@ -446,21 +463,42 @@ html, body {
   }
 
   .planet-item {
-    padding: 3px 6px 3px 12px;
+    padding: 4px 6px 4px 14px;
     gap: 6px;
   }
 
-  .planet-dot { width: 5px; height: 5px; }
-  .planet-name { font-size: 0.52rem; }
+  .planet-dot { width: 7px; height: 7px; }
+  .planet-name { font-size: 0.54rem; }
   .planet-au { font-size: 0.38rem; }
 }
 
 @media (max-height: 500px) and (max-width: 900px) {
-  .brand-title { font-size: 0.72rem; }
-  .brand-line { width: 36px; }
+  .brand-title { font-size: 0.85rem; }
+  .brand-line { width: 40px; }
   .brand-version { font-size: 0.42rem; }
   .scale-bar { display: none; }
   .info-bar { bottom: 46px; }
+
+  .controls-panel {
+    bottom: auto;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .control-group {
+    flex-direction: column;
+    padding: 6px 5px;
+    gap: 4px;
+  }
+
+  .control-group input[type="range"] {
+    width: 60px;
+    transform: rotate(-90deg);
+    margin: 22px 0;
+  }
 
   .planet-nav {
     top: 6px; right: 6px;
@@ -472,7 +510,7 @@ html, body {
     gap: 5px;
   }
 
-  .planet-dot { width: 4px; height: 4px; }
-  .planet-name { font-size: 0.46rem; }
+  .planet-dot { width: 5px; height: 5px; }
+  .planet-name { font-size: 0.48rem; }
   .planet-au { display: none; }
 }
