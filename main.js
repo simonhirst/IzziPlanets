@@ -341,7 +341,7 @@ function setupBackgroundStars() {
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.2, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.8, depthWrite: false })));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.8, depthWrite: false, map: getParticleTexture() })));
 }
 
 function addStarLayer(count, minR, maxR, color, size, opacity) {
@@ -351,7 +351,7 @@ function addStarLayer(count, minR, maxR, color, size, opacity) {
     pos[i*3] = r*Math.sin(ph)*Math.cos(th); pos[i*3+1] = r*Math.cos(ph); pos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: color, size: size, sizeAttenuation: true, transparent: true, opacity: opacity, depthWrite: false })));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: color, size: size * 1.3, sizeAttenuation: true, transparent: true, opacity: opacity, depthWrite: false, map: getParticleTexture() })));
 }
 
 function setupSun() {
@@ -576,7 +576,7 @@ function setupKuiperBelt() {
     pos[i*3] = Math.cos(angle) * r; pos[i*3+1] = THREE.Math.randFloatSpread(3); pos[i*3+2] = Math.sin(angle) * r;
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  kuiperBeltMesh = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x889aaa, size: 0.15, sizeAttenuation: true, transparent: true, opacity: 0.4, depthWrite: false }));
+  kuiperBeltMesh = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x889aaa, size: 0.25, sizeAttenuation: true, transparent: true, opacity: 0.4, depthWrite: false, map: getParticleTexture() }));
   root.add(kuiperBeltMesh);
 
   // Pluto
@@ -616,7 +616,7 @@ function setupMilkyWay() {
   var armGeo = new THREE.BufferGeometry();
   armGeo.setAttribute("position", new THREE.BufferAttribute(armPos, 3));
   armGeo.setAttribute("color", new THREE.BufferAttribute(armCol, 3));
-  milkyWayBand = new THREE.Points(armGeo, new THREE.PointsMaterial({ size: 4.6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending }));
+  milkyWayBand = new THREE.Points(armGeo, new THREE.PointsMaterial({ size: 6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   galaxyGroup.add(milkyWayBand);
 
   // Galactic center bar
@@ -632,7 +632,7 @@ function setupMilkyWay() {
   }
   barGeo.setAttribute("position", new THREE.BufferAttribute(barPos, 3));
   barGeo.setAttribute("color", new THREE.BufferAttribute(barCol, 3));
-  var galacticBar = new THREE.Points(barGeo, new THREE.PointsMaterial({ size: 5, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending }));
+  var galacticBar = new THREE.Points(barGeo, new THREE.PointsMaterial({ size: 7, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   galacticBar.rotation.y = THREE.Math.degToRad(30);
   galaxyGroup.add(galacticBar);
 
@@ -713,7 +713,7 @@ function setupUniverse() {
   var fieldGeo = new THREE.BufferGeometry();
   fieldGeo.setAttribute("position", new THREE.BufferAttribute(fieldPos, 3));
   fieldGeo.setAttribute("color", new THREE.BufferAttribute(fieldCol, 3));
-  universeField = new THREE.Points(fieldGeo, new THREE.PointsMaterial({ size: 620, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  universeField = new THREE.Points(fieldGeo, new THREE.PointsMaterial({ size: 820, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   universeGroup.add(universeField);
 
   // Cosmic web filaments
@@ -735,7 +735,7 @@ function setupUniverse() {
     webPos[i*3] = p.x; webPos[i*3+1] = p.y; webPos[i*3+2] = p.z;
   }
   webGeo.setAttribute("position", new THREE.BufferAttribute(webPos, 3));
-  universeClusters = new THREE.Points(webGeo, new THREE.PointsMaterial({ color: 0xd8d0ff, size: 2200, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  universeClusters = new THREE.Points(webGeo, new THREE.PointsMaterial({ color: 0xd8d0ff, size: 3000, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   universeGroup.add(universeClusters);
 
   // Named galaxies
@@ -780,7 +780,7 @@ function setupUniverse() {
     }
     gGeo.setAttribute("position", new THREE.BufferAttribute(gPos, 3));
     gGeo.setAttribute("color", new THREE.BufferAttribute(gCol, 3));
-    var pts = new THREE.Points(gGeo, new THREE.PointsMaterial({ size: gd.size * 0.012, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+    var pts = new THREE.Points(gGeo, new THREE.PointsMaterial({ size: gd.size * 0.016, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
     group.add(pts);
     var gGlow = new THREE.Mesh(new THREE.SphereGeometry(gd.size * 0.12, 16, 16),
       new THREE.MeshBasicMaterial({ color: gd.color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
