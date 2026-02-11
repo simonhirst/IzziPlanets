@@ -888,20 +888,33 @@ function makeTextSprite(text) {
 
 /* ---- UI ---- */
 function setupUI() {
-  // Planet nav pills
-  var navNames = ["Mercury","Venus","Earth","Mars","Jupiter","Saturn","Uranus","Neptune"];
-  for (var i = 0; i < navNames.length; i++) {
-    (function(name) {
-      var pill = document.createElement("button");
-      pill.className = "planet-pill";
-      pill.textContent = name;
-      pill.addEventListener("click", function() {
+  // Planet nav — ordered by distance from Sun with AU values
+  var navPlanets = [
+    { name: "Mercury", au: "0.4", color: "#a4abae" },
+    { name: "Venus",   au: "0.7", color: "#d5b079" },
+    { name: "Earth",   au: "1.0", color: "#4e86d8" },
+    { name: "Mars",    au: "1.5", color: "#b3623f" },
+    { name: "Jupiter", au: "5.2", color: "#cfa070" },
+    { name: "Saturn",  au: "9.5", color: "#d6bf8e" },
+    { name: "Uranus",  au: "19",  color: "#8fb8ce" },
+    { name: "Neptune", au: "30",  color: "#4d76cc" }
+  ];
+  for (var i = 0; i < navPlanets.length; i++) {
+    (function(np) {
+      var btn = document.createElement("button");
+      btn.className = "planet-item";
+      btn.innerHTML =
+        '<span class="planet-dot" style="--dot-color:' + np.color + '"></span>' +
+        '<span class="planet-name">' + np.name + '</span>' +
+        '<span class="planet-au">' + np.au + ' au</span>';
+      btn.dataset.planet = np.name;
+      btn.addEventListener("click", function() {
         for (var p = 0; p < planets.length; p++) {
-          if (planets[p].def.name === name) { focusPlanet(planets[p]); break; }
+          if (planets[p].def.name === np.name) { focusPlanet(planets[p]); break; }
         }
       });
-      planetNav.appendChild(pill);
-    })(navNames[i]);
+      planetNav.appendChild(btn);
+    })(navPlanets[i]);
   }
 }
 
@@ -943,11 +956,11 @@ function updateUI() {
     else infoBar.classList.remove("visible");
   }
 
-  // Planet pill active state
-  var pills = planetNav ? planetNav.querySelectorAll(".planet-pill") : [];
-  for (var i = 0; i < pills.length; i++) {
-    if (selectedPlanet && pills[i].textContent === selectedPlanet.def.name) pills[i].classList.add("active");
-    else pills[i].classList.remove("active");
+  // Planet nav active state
+  var items = planetNav ? planetNav.querySelectorAll(".planet-item") : [];
+  for (var i = 0; i < items.length; i++) {
+    if (selectedPlanet && items[i].dataset.planet === selectedPlanet.def.name) items[i].classList.add("active");
+    else items[i].classList.remove("active");
   }
 }
 
