@@ -110,13 +110,19 @@ html, body {
 }
 
 .brand-version {
-  margin-top: 8px;
-  font-family: var(--font);
-  font-size: 0.58rem;
-  letter-spacing: 0.2em;
+  margin-top: 10px;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  letter-spacing: 0.25em;
   text-transform: uppercase;
-  color: rgba(126, 170, 255, 0.28);
-  font-weight: 400;
+  color: rgba(126, 170, 255, 0.75);
+  font-weight: 500;
+  text-shadow: 0 0 12px rgba(126, 170, 255, 0.4);
+  padding: 4px 10px;
+  background: rgba(126, 170, 255, 0.08);
+  border: 1px solid rgba(126, 170, 255, 0.2);
+  border-radius: 4px;
+  display: inline-block;
 }
 
 /* ---- Scale Indicator ---- */
