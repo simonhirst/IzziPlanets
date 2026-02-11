@@ -899,6 +899,11 @@ function setupUI() {
     { name: "Uranus",  au: "19",  color: "#8fb8ce" },
     { name: "Neptune", au: "30",  color: "#4d76cc" }
   ];
+  var header = document.createElement("div");
+  header.className = "planet-nav-header";
+  header.textContent = "Solar System";
+  planetNav.appendChild(header);
+
   for (var i = 0; i < navPlanets.length; i++) {
     (function(np) {
       var btn = document.createElement("button");
