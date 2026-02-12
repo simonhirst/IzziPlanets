@@ -8,16 +8,6 @@ const infoBar = document.getElementById("infoBar");
 const infoLabel = document.getElementById("infoLabel");
 const btnReset = document.getElementById("btnReset");
 const planetNav = document.getElementById("planetNav");
-<<<<<<< HEAD
-const perfPanel = document.getElementById("perfPanel");
-const perfFps = document.getElementById("perfFps");
-const perfFrameMs = document.getElementById("perfFrameMs");
-const perfWorstMs = document.getElementById("perfWorstMs");
-const perfCalls = document.getElementById("perfCalls");
-const perfTris = document.getElementById("perfTris");
-const perfQuality = document.getElementById("perfQuality");
-const perfPixelRatio = document.getElementById("perfPixelRatio");
-=======
 const perfShell = document.getElementById("perfShell");
 const perfPanel = document.getElementById("perfPanel");
 const perfGrid = document.getElementById("perfGrid");
@@ -28,7 +18,6 @@ const perfHideBtn = document.getElementById("perfHideBtn");
 const perfShowBtn = document.getElementById("perfShowBtn");
 const perfShowAllBtn = document.getElementById("perfShowAll");
 const perfHideAllBtn = document.getElementById("perfHideAll");
->>>>>>> 0edbd1f (feat(performance): add performance telemetry panel with metrics display and controls)
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const isDesktopBrowser = !/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) &&
   !!(window.matchMedia && window.matchMedia("(pointer: fine)").matches) &&
@@ -470,12 +459,8 @@ setupPlanets();
 setupAsteroidBelt();
 setupKuiperBelt();
 setupUI();
-<<<<<<< HEAD
-initPerformanceHud();
-=======
 setupPerformanceUI();
 setupEvents();
->>>>>>> 0edbd1f (feat(performance): add performance telemetry panel with metrics display and controls)
 updateUI();
 loadEarthAssets();
 animate();
@@ -1835,11 +1820,7 @@ function animate(now) {
   maybeAdjustResolution(dtMs);
   checkPerformanceBudget();
   renderer.render(scene, camera);
-<<<<<<< HEAD
-  updatePerformanceHud(dtMs);
-=======
   updatePerformanceTelemetry(rafNow, false);
->>>>>>> 0edbd1f (feat(performance): add performance telemetry panel with metrics display and controls)
 }
 
 setPositionMode(positionMode);
