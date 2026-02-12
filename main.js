@@ -8,6 +8,14 @@ const infoBar = document.getElementById("infoBar");
 const infoLabel = document.getElementById("infoLabel");
 const btnReset = document.getElementById("btnReset");
 const planetNav = document.getElementById("planetNav");
+const perfPanel = document.getElementById("perfPanel");
+const perfFps = document.getElementById("perfFps");
+const perfFrameMs = document.getElementById("perfFrameMs");
+const perfWorstMs = document.getElementById("perfWorstMs");
+const perfCalls = document.getElementById("perfCalls");
+const perfTris = document.getElementById("perfTris");
+const perfQuality = document.getElementById("perfQuality");
+const perfPixelRatio = document.getElementById("perfPixelRatio");
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const query = new URLSearchParams(window.location.search);
 
@@ -47,6 +55,7 @@ const ATMO_SEGMENTS = quality.atmoSegments;
 const MOON_SEGMENTS = quality.moonSegments;
 const RING_SEGMENTS = quality.ringSegments;
 const SUN_SEGMENTS = quality.sunSegments;
+const PERF_HUD_UPDATE_MS = 800;
 
 const maxDevicePixelRatio = Math.min(window.devicePixelRatio || 1, quality.pixelRatioCap);
 const minPixelRatio = Math.min(maxDevicePixelRatio, quality.minPixelRatio);
@@ -137,6 +146,11 @@ let frameStatsElapsedMs = 0;
 let frameStatsCount = 0;
 let dynamicResolutionElapsedMs = 0;
 const adaptiveResolutionEnabled = query.get("adaptiveRes") !== "off";
+let perfHudElapsedMs = 0;
+let perfHudFrames = 0;
+let perfHudWorstMs = 0;
+let perfHudCallsSum = 0;
+let perfHudTrisSum = 0;
 
 const GALAXY_RADIUS = 18000;
 const SOLAR_GALACTIC_RADIUS = GALAXY_RADIUS * 0.62;
@@ -402,6 +416,7 @@ setupAsteroidBelt();
 setupKuiperBelt();
 setupEvents();
 setupUI();
+initPerformanceHud();
 updateUI();
 loadEarthAssets();
 animate();
@@ -1265,6 +1280,49 @@ function updateScaleContext() {
   }
 }
 
+function formatCompactNumber(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(2) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  return String(Math.round(n));
+}
+
+function initPerformanceHud() {
+  if (!perfPanel) return;
+  if (perfQuality) perfQuality.textContent = qualityTier + (adaptiveResolutionEnabled ? " + dynamic" : "");
+  if (perfPixelRatio) perfPixelRatio.textContent = currentPixelRatio.toFixed(2) + " / " + maxDevicePixelRatio.toFixed(2);
+}
+
+function updatePerformanceHud(dtMs) {
+  if (!perfPanel) return;
+
+  perfHudElapsedMs += dtMs;
+  perfHudFrames += 1;
+  if (dtMs > perfHudWorstMs) perfHudWorstMs = dtMs;
+  perfHudCallsSum += renderer.info.render.calls;
+  perfHudTrisSum += renderer.info.render.triangles;
+
+  if (perfHudElapsedMs < PERF_HUD_UPDATE_MS) return;
+
+  var fps = (perfHudFrames * 1000) / perfHudElapsedMs;
+  var frameMs = perfHudElapsedMs / perfHudFrames;
+  var avgCalls = perfHudCallsSum / perfHudFrames;
+  var avgTris = perfHudTrisSum / perfHudFrames;
+
+  if (perfFps) perfFps.textContent = Math.round(fps).toString();
+  if (perfFrameMs) perfFrameMs.textContent = frameMs.toFixed(1) + " ms";
+  if (perfWorstMs) perfWorstMs.textContent = perfHudWorstMs.toFixed(1) + " ms";
+  if (perfCalls) perfCalls.textContent = formatCompactNumber(avgCalls);
+  if (perfTris) perfTris.textContent = formatCompactNumber(avgTris);
+  if (perfQuality) perfQuality.textContent = qualityTier + (adaptiveResolutionEnabled ? " + dynamic" : "");
+  if (perfPixelRatio) perfPixelRatio.textContent = currentPixelRatio.toFixed(2) + " / " + maxDevicePixelRatio.toFixed(2);
+
+  perfHudElapsedMs = 0;
+  perfHudFrames = 0;
+  perfHudWorstMs = 0;
+  perfHudCallsSum = 0;
+  perfHudTrisSum = 0;
+}
+
 function maybeAdjustResolution(dtMs) {
   if (!adaptiveResolutionEnabled) return;
 
@@ -1369,6 +1427,7 @@ function animate(now) {
   controls.update();
   maybeAdjustResolution(dtMs);
   renderer.render(scene, camera);
+  updatePerformanceHud(dtMs);
 }
 
 setPositionMode(positionMode);
