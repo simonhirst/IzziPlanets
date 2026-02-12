@@ -9,15 +9,56 @@ const infoLabel = document.getElementById("infoLabel");
 const btnReset = document.getElementById("btnReset");
 const planetNav = document.getElementById("planetNav");
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
-const Q = isMobile ? 0.35 : 1; // quality scale for particle counts
+const query = new URLSearchParams(window.location.search);
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, alpha: false, powerPreference: "high-performance", logarithmicDepthBuffer: !isMobile });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
+const QUALITY_PRESETS = {
+  low: {
+    q: 0.28, pixelRatioCap: 1, minPixelRatio: 0.72, logDepth: false, maxAnisotropy: 2,
+    uiMs: 120, hoverMs: 66, liveMs: 160, planetSegments: 40, atmoSegments: 28, moonSegments: 16, ringSegments: 96, sunSegments: 48,
+  },
+  medium: {
+    q: 0.55, pixelRatioCap: 1.35, minPixelRatio: 0.8, logDepth: false, maxAnisotropy: 4,
+    uiMs: 90, hoverMs: 50, liveMs: 100, planetSegments: 56, atmoSegments: 40, moonSegments: 22, ringSegments: 144, sunSegments: 72,
+  },
+  high: {
+    q: 1, pixelRatioCap: 1.75, minPixelRatio: 0.95, logDepth: true, maxAnisotropy: 8,
+    uiMs: 60, hoverMs: 33, liveMs: 50, planetSegments: 80, atmoSegments: 64, moonSegments: 32, ringSegments: 200, sunSegments: 96,
+  },
+};
+
+function inferQualityTier() {
+  if (isMobile) return "low";
+  var mem = navigator.deviceMemory || 0;
+  var cores = navigator.hardwareConcurrency || 0;
+  if ((mem && mem <= 4) || (cores && cores <= 4)) return "low";
+  if ((mem && mem <= 8) || (cores && cores <= 8)) return "medium";
+  return "high";
+}
+
+var requestedQuality = (query.get("quality") || "").toLowerCase();
+const qualityTier = QUALITY_PRESETS[requestedQuality] ? requestedQuality : inferQualityTier();
+const quality = QUALITY_PRESETS[qualityTier];
+const Q = quality.q;
+const UI_UPDATE_INTERVAL_MS = quality.uiMs;
+const HOVER_UPDATE_INTERVAL_MS = quality.hoverMs;
+const LIVE_UPDATE_INTERVAL_MS = quality.liveMs;
+const PLANET_SEGMENTS = quality.planetSegments;
+const ATMO_SEGMENTS = quality.atmoSegments;
+const MOON_SEGMENTS = quality.moonSegments;
+const RING_SEGMENTS = quality.ringSegments;
+const SUN_SEGMENTS = quality.sunSegments;
+
+const maxDevicePixelRatio = Math.min(window.devicePixelRatio || 1, quality.pixelRatioCap);
+const minPixelRatio = Math.min(maxDevicePixelRatio, quality.minPixelRatio);
+let currentPixelRatio = maxDevicePixelRatio;
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, alpha: false, powerPreference: "high-performance", logarithmicDepthBuffer: quality.logDepth });
+renderer.setPixelRatio(currentPixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
-const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+const maxAnisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), quality.maxAnisotropy);
 const textureLoader = new THREE.TextureLoader();
 textureLoader.setCrossOrigin("anonymous");
 
@@ -35,7 +76,6 @@ controls.target.set(0, 0, 0);
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.18;
 
-const query = new URLSearchParams(window.location.search);
 if (query.get("view") === "galaxy") { camera.position.set(0, 3200, 9400); controls.autoRotate = false; }
 else if (query.get("view") === "universe") { camera.position.set(0, 2200000, 7800000); controls.autoRotate = false; }
 else if (query.get("view") === "all") { camera.position.set(0, 6400000, 21000000); controls.autoRotate = false; }
@@ -47,6 +87,7 @@ scene.add(root);
 const raycaster = new THREE.Raycaster();
 const pointerNdc = new THREE.Vector2(9, 9);
 const pointerPx = new THREE.Vector2();
+const pointerUpPos = new THREE.Vector2();
 const clock = new THREE.Clock();
 let pointerInside = false, hoveredPlanet = null, selectedPlanet = null, selectedAngleIndex = 0;
 let controlsDragging = false, cameraTween = null, pointerDownPos = null;
@@ -64,6 +105,7 @@ var timeWarpTarget = sliderToTimeWarp(Number(timeScaleInput.value));
 var timeWarp = timeWarpTarget;
 var positionMode = positionModeInput ? positionModeInput.value : POSITION_MODE_SIM;
 const selectedCameraOffset = new THREE.Vector3();
+const selectedCameraTarget = new THREE.Vector3();
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
 const defaultCamPos = new THREE.Vector3(0, 40, 170);
 const defaultTarget = new THREE.Vector3(0, 0, 0);
@@ -81,6 +123,20 @@ let milkyWayUniverseMarker = null, milkyWayUniverseLabel = null, universeLabel =
 let asteroidBeltMesh = null, kuiperBeltMesh = null;
 const namedGalaxies = [];
 const nebulaeMeshes = [];
+const asteroidBeltFadeMaterials = [];
+let planetNavItems = [];
+let lastScalePct = -1;
+let lastInfoLabel = "__init__";
+let lastInfoVisible = false;
+let lastActivePlanetName = "__init__";
+let lastScaleDist = -1;
+let uiElapsedMs = UI_UPDATE_INTERVAL_MS;
+let hoverElapsedMs = HOVER_UPDATE_INTERVAL_MS;
+let lastLiveUpdateMs = 0;
+let frameStatsElapsedMs = 0;
+let frameStatsCount = 0;
+let dynamicResolutionElapsedMs = 0;
+const adaptiveResolutionEnabled = query.get("adaptiveRes") !== "off";
 
 const GALAXY_RADIUS = 18000;
 const SOLAR_GALACTIC_RADIUS = GALAXY_RADIUS * 0.62;
@@ -346,6 +402,7 @@ setupAsteroidBelt();
 setupKuiperBelt();
 setupEvents();
 setupUI();
+updateUI();
 loadEarthAssets();
 animate();
 
@@ -382,17 +439,19 @@ function addStarLayer(count, minR, maxR, color, size, opacity) {
 }
 
 function setupSun() {
-  var sun = new THREE.Mesh(new THREE.SphereGeometry(6.2, 96, 96), new THREE.MeshBasicMaterial({ color: 0xffbf5f }));
+  var sun = new THREE.Mesh(new THREE.SphereGeometry(6.2, SUN_SEGMENTS, SUN_SEGMENTS), new THREE.MeshBasicMaterial({ color: 0xffbf5f }));
   root.add(sun);
   var glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: createGlowTexture(0xfff0c8, 0xffc060, 0xff9620), color: 0xffdd98, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
   glow.scale.set(30, 30, 1); sun.add(glow);
   var corona = new THREE.Sprite(new THREE.SpriteMaterial({ map: createGlowTexture(0xffeedd, 0xffaa55, 0xff6600), color: 0xffccaa, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
   corona.scale.set(60, 60, 1); sun.add(corona);
-  sun.add(new THREE.Mesh(new THREE.SphereGeometry(6.35, 64, 64), new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, depthWrite: false })));
+  var sunShellSegments = Math.max(24, (SUN_SEGMENTS * 0.66) | 0);
+  sun.add(new THREE.Mesh(new THREE.SphereGeometry(6.35, sunShellSegments, sunShellSegments), new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, depthWrite: false })));
 }
 
 function setupPlanets() {
   var orbitLineMat = new THREE.LineBasicMaterial({ color: 0x35537f, transparent: true, opacity: 0.4 });
+  var moonOrbitLineMat = new THREE.LineBasicMaterial({ color: 0x5a6e8a, transparent: true, opacity: 0.25 });
   for (var di = 0; di < defs.length; di++) {
     var def = defs[di];
     var orbitLine = createOrbit(def.orbitRadius, orbitLineMat);
@@ -412,7 +471,7 @@ function setupPlanets() {
       delete matOpts.map; matOpts.color = def.color;
     }
     var material = new THREE.MeshStandardMaterial(matOpts);
-    var planetMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius, 80, 80), material);
+    var planetMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius, PLANET_SEGMENTS, PLANET_SEGMENTS), material);
     planetMesh.rotation.z = THREE.Math.degToRad(def.tilt);
     anchor.add(planetMesh);
     pickables.push(planetMesh);
@@ -420,23 +479,23 @@ function setupPlanets() {
     var atmosphereMesh = null, cloudMesh = null;
     if (def.atmo) {
       atmosphereMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(def.radius * def.atmo.scale, 64, 64),
+        new THREE.SphereGeometry(def.radius * def.atmo.scale, ATMO_SEGMENTS, ATMO_SEGMENTS),
         new THREE.MeshBasicMaterial({ color: def.atmo.color, transparent: true, opacity: def.atmo.opacity, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false })
       );
       planetMesh.add(atmosphereMesh);
     }
     if (def.name === "Earth") {
-      cloudMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * 1.028, 64, 64),
+      cloudMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * 1.028, ATMO_SEGMENTS, ATMO_SEGMENTS),
         new THREE.MeshPhongMaterial({ color: 0xd9ecff, transparent: true, opacity: 0.13, depthWrite: false, emissive: new THREE.Color(0x5f87c5), emissiveIntensity: 0.12 }));
       planetMesh.add(cloudMesh);
-      atmosphereMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * 1.08, 64, 64),
+      atmosphereMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * 1.08, ATMO_SEGMENTS, ATMO_SEGMENTS),
         new THREE.MeshBasicMaterial({ color: 0x7ab3ff, transparent: true, opacity: 0.14, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false }));
       planetMesh.add(atmosphereMesh);
     }
 
     if (def.ring) {
       var ringMat;
-      var ringGeo = new THREE.RingGeometry(def.ring.inner, def.ring.outer, 200, 8);
+      var ringGeo = new THREE.RingGeometry(def.ring.inner, def.ring.outer, RING_SEGMENTS, 8);
       // Fix UVs: remap from 2D projection to radial (U = inner→outer, V = 0.5)
       var ringUvs = ringGeo.attributes.uv;
       var ringPositions = ringGeo.attributes.position;
@@ -465,7 +524,7 @@ function setupPlanets() {
     for (var mi = 0; mi < def.moons.length; mi++) {
       var md = def.moons[mi];
       var moonOrbitR = def.radius * md.of;
-      var moonOrbit = createOrbit(moonOrbitR, new THREE.LineBasicMaterial({ color: 0x5a6e8a, transparent: true, opacity: 0.25 }));
+      var moonOrbit = createOrbit(moonOrbitR, moonOrbitLineMat);
       anchor.add(moonOrbit); orbitLines.push(moonOrbit);
       var moonPivot = new THREE.Object3D();
       if (md.tilt) moonPivot.rotation.z = THREE.Math.degToRad(md.tilt);
@@ -474,10 +533,10 @@ function setupPlanets() {
       moonAnchor.position.x = moonOrbitR;
       moonPivot.add(moonAnchor);
       var moonMat = new THREE.MeshStandardMaterial({ color: md.color, roughness: 0.9, metalness: 0.01, emissive: new THREE.Color(0x0f1218), emissiveIntensity: 0.04 });
-      var moonMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * md.rf, 32, 32), moonMat);
+      var moonMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * md.rf, MOON_SEGMENTS, MOON_SEGMENTS), moonMat);
       moonAnchor.add(moonMesh);
       if (md.atmo) {
-        moonMesh.add(new THREE.Mesh(new THREE.SphereGeometry(def.radius * md.rf * 1.15, 24, 24),
+        moonMesh.add(new THREE.Mesh(new THREE.SphereGeometry(def.radius * md.rf * 1.15, Math.max(12, (MOON_SEGMENTS * 0.75) | 0), Math.max(12, (MOON_SEGMENTS * 0.75) | 0)),
           new THREE.MeshBasicMaterial({ color: md.atmo, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false })));
       }
       allMoonRefs.push({ orbitPivot: moonPivot, mesh: moonMesh, material: moonMat, orbitDays: Math.abs(md.od), spinDays: Math.abs(md.od), spin: Math.random() * Math.PI * 2, retrograde: md.od < 0, name: md.name, parentPlanet: def.name });
@@ -593,6 +652,13 @@ function setupAsteroidBelt() {
   }
 
   asteroidBeltMesh = beltGroup;
+  asteroidBeltFadeMaterials.length = 0;
+  asteroidBeltMesh.traverse(function(child) {
+    if ((child.isMesh || child.isPoints) && child.material && child.material.transparent) {
+      child.material._baseOp = child.material.opacity;
+      asteroidBeltFadeMaterials.push(child.material);
+    }
+  });
 }
 
 function setupKuiperBelt() {
@@ -611,12 +677,13 @@ function setupKuiperBelt() {
   root.add(plutoOrbit); orbitLines.push(plutoOrbit);
   var plutoPivot = new THREE.Object3D(); plutoPivot.rotation.y = Math.random() * Math.PI * 2; root.add(plutoPivot);
   var plutoAnchor = new THREE.Object3D(); plutoAnchor.position.x = 105; plutoPivot.add(plutoAnchor);
-  var plutoMesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, 32, 32), new THREE.MeshStandardMaterial({ color: 0xccbbaa, roughness: 0.92 }));
+  var plutoMesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, MOON_SEGMENTS, MOON_SEGMENTS), new THREE.MeshStandardMaterial({ color: 0xccbbaa, roughness: 0.92 }));
   plutoAnchor.add(plutoMesh);
   // Charon
   var charonPivot = new THREE.Object3D(); plutoAnchor.add(charonPivot);
   var charonAnchor = new THREE.Object3D(); charonAnchor.position.x = 0.9; charonPivot.add(charonAnchor);
-  var charonMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 24, 24), new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.9 }));
+  var charonSegments = Math.max(12, (MOON_SEGMENTS * 0.75) | 0);
+  var charonMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, charonSegments, charonSegments), new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.9 }));
   charonAnchor.add(charonMesh);
   allMoonRefs.push({ orbitPivot: charonPivot, mesh: charonMesh, material: charonMesh.material, orbitDays: 6.39, spinDays: 6.39, spin: 0, retrograde: false, name: "Charon" });
   var plutoObj = { def: { name: "Pluto", orbitDays: 90560, spinDays: -6.39, radius: 0.45 }, orbitPivot: plutoPivot, anchor: plutoAnchor, mesh: plutoMesh, material: plutoMesh.material, highlight: 0, spin: 0 };
@@ -637,8 +704,9 @@ function setupMilkyWay() {
     var thickness = THREE.Math.randFloatSpread(100) * (0.28 + radius / GALAXY_RADIUS);
     armPos[i*3] = Math.cos(angle) * radius; armPos[i*3+1] = thickness; armPos[i*3+2] = Math.sin(angle) * radius;
     var mix = Math.min(1, radius / GALAXY_RADIUS) * (0.4 + Math.random() * 0.6);
-    var c = warm.clone().lerp(cool, mix);
-    armCol[i*3] = c.r; armCol[i*3+1] = c.g; armCol[i*3+2] = c.b;
+    armCol[i*3] = warm.r + (cool.r - warm.r) * mix;
+    armCol[i*3+1] = warm.g + (cool.g - warm.g) * mix;
+    armCol[i*3+2] = warm.b + (cool.b - warm.b) * mix;
   }
   var armGeo = new THREE.BufferGeometry();
   armGeo.setAttribute("position", new THREE.BufferAttribute(armPos, 3));
@@ -734,8 +802,16 @@ function setupUniverse() {
     var r = 220000 + Math.pow(Math.random(), 0.56) * UNIVERSE_RADIUS;
     var th = Math.random() * Math.PI * 2, ph = Math.acos(THREE.Math.randFloatSpread(2));
     fieldPos[i*3] = r*Math.sin(ph)*Math.cos(th); fieldPos[i*3+1] = r*Math.cos(ph); fieldPos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
-    var m = Math.random(), c = m < 0.33 ? violet.clone().lerp(cyan, Math.random()) : amber.clone().lerp(violet, Math.random());
-    fieldCol[i*3] = c.r; fieldCol[i*3+1] = c.g; fieldCol[i*3+2] = c.b;
+    var m = Math.random(), mix = Math.random();
+    if (m < 0.33) {
+      fieldCol[i*3] = violet.r + (cyan.r - violet.r) * mix;
+      fieldCol[i*3+1] = violet.g + (cyan.g - violet.g) * mix;
+      fieldCol[i*3+2] = violet.b + (cyan.b - violet.b) * mix;
+    } else {
+      fieldCol[i*3] = amber.r + (violet.r - amber.r) * mix;
+      fieldCol[i*3+1] = amber.g + (violet.g - amber.g) * mix;
+      fieldCol[i*3+2] = amber.b + (violet.b - amber.b) * mix;
+    }
   }
   var fieldGeo = new THREE.BufferGeometry();
   fieldGeo.setAttribute("position", new THREE.BufferAttribute(fieldPos, 3));
@@ -757,9 +833,9 @@ function setupUniverse() {
   }
   for (var i = 0; i < webCount; i++) {
     var fil = filaments[i % filaments.length], t = Math.random(), spread = 80000;
-    var p = fil.start.clone().lerp(fil.end, t);
-    p.x += THREE.Math.randFloatSpread(spread); p.y += THREE.Math.randFloatSpread(spread); p.z += THREE.Math.randFloatSpread(spread);
-    webPos[i*3] = p.x; webPos[i*3+1] = p.y; webPos[i*3+2] = p.z;
+    webPos[i*3] = fil.start.x + (fil.end.x - fil.start.x) * t + THREE.Math.randFloatSpread(spread);
+    webPos[i*3+1] = fil.start.y + (fil.end.y - fil.start.y) * t + THREE.Math.randFloatSpread(spread);
+    webPos[i*3+2] = fil.start.z + (fil.end.z - fil.start.z) * t + THREE.Math.randFloatSpread(spread);
   }
   webGeo.setAttribute("position", new THREE.BufferAttribute(webPos, 3));
   universeClusters = new THREE.Points(webGeo, new THREE.PointsMaterial({ color: 0xd8d0ff, size: 3000, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
@@ -957,9 +1033,12 @@ function setPositionMode(mode) {
   if (timeScaleInput) timeScaleInput.disabled = positionMode === POSITION_MODE_LIVE;
 
   if (positionMode === POSITION_MODE_LIVE) {
-    applyLivePlanetPositions(Date.now());
+    var liveNow = Date.now();
+    applyLivePlanetPositions(liveNow);
+    lastLiveUpdateMs = liveNow;
     return;
   }
+  lastLiveUpdateMs = 0;
 
   for (var i = 0; i < planets.length; i++) {
     var p = planets[i];
@@ -1006,6 +1085,7 @@ function setupUI() {
       planetNav.appendChild(btn);
     })(navPlanets[i]);
   }
+  planetNavItems = planetNav ? Array.prototype.slice.call(planetNav.querySelectorAll(".planet-item")) : [];
 }
 
 function updateUI() {
@@ -1020,8 +1100,11 @@ function updateUI() {
   else if (dist < UNIVERSE_REVEAL_FULL) pct = 78 + ((dist - UNIVERSE_REVEAL_START) / (UNIVERSE_REVEAL_FULL - UNIVERSE_REVEAL_START)) * 22;
   else pct = 100;
   pct = Math.min(100, Math.max(0, pct));
-  if (scaleFill) scaleFill.style.width = pct + "%";
-  if (scaleThumb) scaleThumb.style.left = pct + "%";
+  if (Math.abs(pct - lastScalePct) > 0.12) {
+    if (scaleFill) scaleFill.style.width = pct + "%";
+    if (scaleThumb) scaleThumb.style.left = pct + "%";
+    lastScalePct = pct;
+  }
 
   // Info bar: show context label
   var label = "";
@@ -1040,17 +1123,27 @@ function updateUI() {
   } else if (dist > 50) {
     label = "Inner Solar System";
   }
-  if (infoLabel) infoLabel.textContent = label;
-  if (infoBar) {
-    if (label) infoBar.classList.add("visible");
-    else infoBar.classList.remove("visible");
+  if (label !== lastInfoLabel) {
+    if (infoLabel) infoLabel.textContent = label;
+    lastInfoLabel = label;
+  }
+  var visible = !!label;
+  if (visible !== lastInfoVisible) {
+    if (infoBar) {
+      if (visible) infoBar.classList.add("visible");
+      else infoBar.classList.remove("visible");
+    }
+    lastInfoVisible = visible;
   }
 
   // Planet nav active state
-  var items = planetNav ? planetNav.querySelectorAll(".planet-item") : [];
-  for (var i = 0; i < items.length; i++) {
-    if (selectedPlanet && items[i].dataset.planet === selectedPlanet.def.name) items[i].classList.add("active");
-    else items[i].classList.remove("active");
+  var activePlanet = selectedPlanet ? selectedPlanet.def.name : "";
+  if (activePlanet !== lastActivePlanetName) {
+    for (var i = 0; i < planetNavItems.length; i++) {
+      if (activePlanet && planetNavItems[i].dataset.planet === activePlanet) planetNavItems[i].classList.add("active");
+      else planetNavItems[i].classList.remove("active");
+    }
+    lastActivePlanetName = activePlanet;
   }
 }
 
@@ -1067,16 +1160,19 @@ function setupEvents() {
     positionModeInput.addEventListener("change", function() { setPositionMode(positionModeInput.value); });
   }
   canvas.addEventListener("pointermove", function(e) { pointerInside = true; pointerPx.set(e.clientX, e.clientY); updatePointer(e); });
-  canvas.addEventListener("pointerdown", function(e) { pointerDownPos = new THREE.Vector2(e.clientX, e.clientY); updatePointer(e); });
+  canvas.addEventListener("pointerdown", function(e) { pointerInside = true; pointerDownPos = new THREE.Vector2(e.clientX, e.clientY); updatePointer(e); });
   canvas.addEventListener("pointerup", function(e) {
+    pointerInside = true;
     updatePointer(e); if (!pointerDownPos) return;
-    var d = pointerDownPos.distanceTo(new THREE.Vector2(e.clientX, e.clientY)); pointerDownPos = null;
+    updateHover();
+    pointerUpPos.set(e.clientX, e.clientY);
+    var d = pointerDownPos.distanceTo(pointerUpPos); pointerDownPos = null;
     if (d < 4 && hoveredPlanet) focusPlanet(hoveredPlanet);
   });
   canvas.addEventListener("pointerleave", function() { pointerInside = false; hoveredPlanet = null; tooltip.classList.add("hidden"); pointerNdc.set(9, 9); });
   canvas.addEventListener("dblclick", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
   if (btnReset) btnReset.addEventListener("click", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
-  var onResize = function() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+  var onResize = function() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight, false); };
   window.addEventListener("resize", onResize);
   if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
   document.addEventListener("touchmove", function(e) { if (e.target === canvas) e.preventDefault(); }, { passive: false });
@@ -1129,6 +1225,8 @@ function updateHover() {
 
 function updateScaleContext() {
   var dist = camera.position.distanceTo(controls.target);
+  if (lastScaleDist >= 0 && Math.abs(dist - lastScaleDist) < 0.02) return;
+  lastScaleDist = dist;
   var gA = THREE.MathUtils.clamp((dist - GALAXY_REVEAL_START) / (GALAXY_REVEAL_FULL - GALAXY_REVEAL_START), 0, 1);
   var uA = THREE.MathUtils.clamp((dist - UNIVERSE_REVEAL_START) / (UNIVERSE_REVEAL_FULL - UNIVERSE_REVEAL_START), 0, 1);
 
@@ -1143,12 +1241,10 @@ function updateScaleContext() {
 
   if (asteroidBeltMesh) {
     var beltFade = 1 - gA * 0.9;
-    asteroidBeltMesh.traverse(function(child) {
-      if ((child.isMesh || child.isPoints) && child.material.transparent) {
-        if (child.material._baseOp === undefined) child.material._baseOp = child.material.opacity;
-        child.material.opacity = child.material._baseOp * beltFade;
-      }
-    });
+    for (var bi = 0; bi < asteroidBeltFadeMaterials.length; bi++) {
+      var mat = asteroidBeltFadeMaterials[bi];
+      mat.opacity = mat._baseOp * beltFade;
+    }
   }
   if (kuiperBeltMesh) kuiperBeltMesh.material.opacity = 0.4 * (1 - gA * 0.9);
 
@@ -1169,19 +1265,50 @@ function updateScaleContext() {
   }
 }
 
+function maybeAdjustResolution(dtMs) {
+  if (!adaptiveResolutionEnabled) return;
+
+  frameStatsElapsedMs += dtMs;
+  frameStatsCount += 1;
+  dynamicResolutionElapsedMs += dtMs;
+
+  if (dynamicResolutionElapsedMs < 1200 || frameStatsCount < 24) return;
+
+  var avgFrameMs = frameStatsElapsedMs / frameStatsCount;
+  frameStatsElapsedMs = 0;
+  frameStatsCount = 0;
+  dynamicResolutionElapsedMs = 0;
+
+  var nextRatio = currentPixelRatio;
+  if (avgFrameMs > 23 && currentPixelRatio > minPixelRatio) nextRatio = Math.max(minPixelRatio, currentPixelRatio - 0.12);
+  else if (avgFrameMs < 15 && currentPixelRatio < maxDevicePixelRatio) nextRatio = Math.min(maxDevicePixelRatio, currentPixelRatio + 0.08);
+
+  if (Math.abs(nextRatio - currentPixelRatio) > 0.01) {
+    currentPixelRatio = nextRatio;
+    renderer.setPixelRatio(currentPixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+  }
+}
+
 function animate(now) {
   requestAnimationFrame(animate);
   var dt = Math.min(clock.getDelta(), 0.05);
+  var dtMs = dt * 1000;
   var nowMs = Date.now();
   var simDays = 0;
   if (positionMode === POSITION_MODE_SIM) {
     // Smooth interpolation toward target speed — prevents jerky jumps
     timeWarp += (timeWarpTarget - timeWarp) * (1 - Math.exp(-dt * 8));
     simDays = dt * timeWarp;
-  } else {
+  } else if (!lastLiveUpdateMs || (nowMs - lastLiveUpdateMs) >= LIVE_UPDATE_INTERVAL_MS) {
     applyLivePlanetPositions(nowMs);
+    lastLiveUpdateMs = nowMs;
   }
-  updateHover();
+  hoverElapsedMs += dtMs;
+  if (hoverElapsedMs >= HOVER_UPDATE_INTERVAL_MS || controlsDragging) {
+    updateHover();
+    hoverElapsedMs = 0;
+  }
   updateCameraTween(now || 0);
 
   for (var i = 0; i < planets.length; i++) {
@@ -1225,14 +1352,22 @@ function animate(now) {
     var ft = selectedPlanet.mesh.getWorldPosition(v2);
     var alpha = 1 - Math.exp(-dt * 6);
     controls.target.lerp(ft, alpha);
-    if (!controlsDragging) camera.position.lerp(ft.clone().add(selectedCameraOffset), alpha);
+    if (!controlsDragging) {
+      selectedCameraTarget.copy(ft).add(selectedCameraOffset);
+      camera.position.lerp(selectedCameraTarget, alpha);
+    }
     else selectedCameraOffset.copy(camera.position).sub(controls.target);
   }
 
   updateScaleContext();
-  updateUI();
+  uiElapsedMs += dtMs;
+  if (uiElapsedMs >= UI_UPDATE_INTERVAL_MS) {
+    updateUI();
+    uiElapsedMs = 0;
+  }
   controls.autoRotate = !selectedPlanet && !cameraTween && !controlsDragging;
   controls.update();
+  maybeAdjustResolution(dtMs);
   renderer.render(scene, camera);
 }
 
