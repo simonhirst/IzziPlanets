@@ -20,6 +20,10 @@ const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navig
 const query = new URLSearchParams(window.location.search);
 
 const QUALITY_PRESETS = {
+  ultraLow: {
+    q: 0.12, pixelRatioCap: 1, minPixelRatio: 0.5, logDepth: false, maxAnisotropy: 1,
+    uiMs: 180, hoverMs: 120, liveMs: 250, planetSegments: 24, atmoSegments: 16, moonSegments: 10, ringSegments: 48, sunSegments: 24,
+  },
   low: {
     q: 0.28, pixelRatioCap: 1, minPixelRatio: 0.72, logDepth: false, maxAnisotropy: 2,
     uiMs: 120, hoverMs: 66, liveMs: 160, planetSegments: 40, atmoSegments: 28, moonSegments: 16, ringSegments: 96, sunSegments: 48,
@@ -35,11 +39,13 @@ const QUALITY_PRESETS = {
 };
 
 function inferQualityTier() {
-  if (isMobile) return "low";
+  if (isMobile) return "ultraLow";
   var mem = navigator.deviceMemory || 0;
   var cores = navigator.hardwareConcurrency || 0;
-  if ((mem && mem <= 4) || (cores && cores <= 4)) return "low";
-  if ((mem && mem <= 8) || (cores && cores <= 8)) return "medium";
+  // More aggressive low-spec detection for better performance
+  if ((mem && mem <= 6) || (cores && cores <= 4)) return "ultraLow";
+  if ((mem && mem <= 8) || (cores && cores <= 6)) return "low";
+  if ((mem && mem <= 16) || (cores && cores <= 10)) return "medium";
   return "high";
 }
 
@@ -140,6 +146,10 @@ let lastInfoVisible = false;
 let lastActivePlanetName = "__init__";
 let lastScaleDist = -1;
 let uiElapsedMs = UI_UPDATE_INTERVAL_MS;
+
+// Visibility state for particle systems
+let milkyWayVisible = true;
+let universeVisible = false;
 let hoverElapsedMs = HOVER_UPDATE_INTERVAL_MS;
 let lastLiveUpdateMs = 0;
 let frameStatsElapsedMs = 0;
@@ -486,9 +496,38 @@ function setupPlanets() {
       delete matOpts.map; matOpts.color = def.color;
     }
     var material = new THREE.MeshStandardMaterial(matOpts);
-    var planetMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius, PLANET_SEGMENTS, PLANET_SEGMENTS), material);
-    planetMesh.rotation.z = THREE.Math.degToRad(def.tilt);
-    anchor.add(planetMesh);
+    
+    // Create LOD (Level of Detail) for planet - use simpler geometry at distance
+    var lod = new THREE.LOD();
+    
+    // High detail (close view)
+    var highGeo = new THREE.SphereGeometry(def.radius, PLANET_SEGMENTS, PLANET_SEGMENTS);
+    var highMesh = new THREE.Mesh(highGeo, material);
+    highMesh.rotation.z = THREE.Math.degToRad(def.tilt);
+    lod.addLevel(highMesh, 0);
+    
+    // Medium detail (medium distance)
+    var medGeo = new THREE.SphereGeometry(def.radius, Math.max(16, PLANET_SEGMENTS * 0.5 | 0), Math.max(16, PLANET_SEGMENTS * 0.5 | 0));
+    var medMesh = new THREE.Mesh(medGeo, material);
+    medMesh.rotation.z = THREE.Math.degToRad(def.tilt);
+    lod.addLevel(medMesh, def.radius * 15);
+    
+    // Low detail (far view)
+    var lowGeo = new THREE.SphereGeometry(def.radius, Math.max(12, PLANET_SEGMENTS * 0.25 | 0), Math.max(12, PLANET_SEGMENTS * 0.25 | 0));
+    var lowMesh = new THREE.Mesh(lowGeo, material);
+    lowMesh.rotation.z = THREE.Math.degToRad(def.tilt);
+    lod.addLevel(lowMesh, def.radius * 50);
+    
+    // Very low detail (very far) - use sprite for maximum performance
+    var spriteMat = new THREE.SpriteMaterial({ color: def.color, transparent: true, opacity: 0.9 });
+    var sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(def.radius * 2.5, def.radius * 2.5, 1);
+    lod.addLevel(sprite, def.radius * 150);
+    
+    anchor.add(lod);
+    
+    // Store reference to the high-detail mesh for picking and animations
+    var planetMesh = highMesh;
     pickables.push(planetMesh);
 
     var atmosphereMesh = null, cloudMesh = null;
@@ -530,7 +569,7 @@ function setupPlanets() {
       planetMesh.add(ring);
     }
 
-    var planet = { def: def, orbitPivot: orbitPivot, anchor: anchor, mesh: planetMesh, clouds: cloudMesh, atmosphere: atmosphereMesh, material: material, highlight: 0, spin: Math.random() * Math.PI * 2 };
+    var planet = { def: def, orbitPivot: orbitPivot, anchor: anchor, mesh: planetMesh, lod: lod, clouds: cloudMesh, atmosphere: atmosphereMesh, material: material, highlight: 0, spin: Math.random() * Math.PI * 2 };
     planetMesh.userData.planet = planet;
     planets.push(planet);
     if (def.name === "Earth") earthPlanetRef = planet;
@@ -967,7 +1006,8 @@ function loadTexture(url, isColor) {
 
 function createOrbit(radius, material) {
   var pts = [];
-  for (var i = 0; i <= 200; i++) { var a = (i / 200) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius)); }
+  var segments = 96; // Reduced from 200 for better performance
+  for (var i = 0; i <= segments; i++) { var a = (i / segments) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius)); }
   var line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), material);
   line.userData.baseOpacity = material.opacity !== undefined ? material.opacity : 1;
   return line;
@@ -1227,8 +1267,37 @@ function updateCameraTween(now) {
 
 function updateHover() {
   if (!pointerInside) return;
+  
+  // Skip raycasting when too far from solar system (performance optimization)
+  var dist = camera.position.distanceTo(controls.target);
+  if (dist > 500) {
+    hoveredPlanet = null;
+    tooltip.classList.add("hidden");
+    canvas.style.cursor = controlsDragging ? "grabbing" : "grab";
+    return;
+  }
+  
   raycaster.setFromCamera(pointerNdc, camera);
-  var hits = raycaster.intersectObjects(pickables, false);
+  
+  // Set far plane for raycaster to limit checks
+  raycaster.far = Math.min(dist + 200, 500);
+  
+  // Filter pickables by approximate distance for better performance
+  var nearbyPickables = [];
+  var camPos = camera.position;
+  for (var i = 0; i < pickables.length; i++) {
+    var obj = pickables[i];
+    if (obj.position) {
+      var objDist = camPos.distanceTo(obj.position);
+      if (objDist < raycaster.far * 1.5) {
+        nearbyPickables.push(obj);
+      }
+    } else {
+      nearbyPickables.push(obj);
+    }
+  }
+  
+  var hits = raycaster.intersectObjects(nearbyPickables, false);
   hoveredPlanet = hits.length > 0 ? hits[0].object.userData.planet : null;
   canvas.style.cursor = hoveredPlanet ? "pointer" : controlsDragging ? "grabbing" : "grab";
   if (hoveredPlanet) {
@@ -1277,6 +1346,46 @@ function updateScaleContext() {
   for (var i = 0; i < orbitLines.length; i++) {
     var base = orbitLines[i].userData.baseOpacity || 0.4;
     orbitLines[i].material.opacity = base * (1 - gA * 0.82) * (1 - uA * 0.8);
+  }
+}
+
+// Visibility culling for particle systems - hide when not visible to save GPU
+function updateParticleVisibility() {
+  var dist = camera.position.distanceTo(controls.target);
+  
+  // Milky Way visibility - hide when deep in solar system
+  var shouldShowMilkyWay = dist > GALAXY_REVEAL_START * 0.3;
+  if (milkyWayVisible !== shouldShowMilkyWay) {
+    milkyWayVisible = shouldShowMilkyWay;
+    if (milkyWayBand) milkyWayBand.visible = shouldShowMilkyWay;
+    if (galacticCenterGlow) galacticCenterGlow.visible = shouldShowMilkyWay;
+    // Also hide galaxyGroup children for better performance
+    if (galaxyGroup) galaxyGroup.visible = shouldShowMilkyWay;
+  }
+  
+  // Universe visibility - hide when not in universe view
+  var shouldShowUniverse = dist > UNIVERSE_REVEAL_START * 0.3;
+  if (universeVisible !== shouldShowUniverse) {
+    universeVisible = shouldShowUniverse;
+    if (universeField) universeField.visible = shouldShowUniverse;
+    if (universeClusters) universeClusters.visible = shouldShowUniverse;
+    if (universeGroup) universeGroup.visible = shouldShowUniverse;
+  }
+  
+  // Asteroid belt - fade visibility when very far or very close
+  if (asteroidBeltMesh) {
+    var beltVisible = dist < 500 && dist > 5;
+    if (asteroidBeltMesh.visible !== beltVisible) {
+      asteroidBeltMesh.visible = beltVisible;
+    }
+  }
+  
+  // Kuiper belt - hide when not relevant
+  if (kuiperBeltMesh) {
+    var kuiperVisible = dist < 1000 && dist > 20;
+    if (kuiperBeltMesh.visible !== kuiperVisible) {
+      kuiperBeltMesh.visible = kuiperVisible;
+    }
   }
 }
 
@@ -1338,13 +1447,35 @@ function maybeAdjustResolution(dtMs) {
   dynamicResolutionElapsedMs = 0;
 
   var nextRatio = currentPixelRatio;
-  if (avgFrameMs > 23 && currentPixelRatio > minPixelRatio) nextRatio = Math.max(minPixelRatio, currentPixelRatio - 0.12);
-  else if (avgFrameMs < 15 && currentPixelRatio < maxDevicePixelRatio) nextRatio = Math.min(maxDevicePixelRatio, currentPixelRatio + 0.08);
+  
+  // More aggressive quality reduction for better performance
+  if (avgFrameMs > 33 && currentPixelRatio > minPixelRatio) {
+    // Below 30 FPS - reduce quality faster
+    nextRatio = Math.max(minPixelRatio, currentPixelRatio - 0.18);
+  } else if (avgFrameMs > 23 && currentPixelRatio > minPixelRatio) {
+    // Below 43 FPS - reduce quality
+    nextRatio = Math.max(minPixelRatio, currentPixelRatio - 0.12);
+  } else if (avgFrameMs < 14 && currentPixelRatio < maxDevicePixelRatio) {
+    // Above 70 FPS - can increase quality
+    nextRatio = Math.min(maxDevicePixelRatio, currentPixelRatio + 0.06);
+  }
 
   if (Math.abs(nextRatio - currentPixelRatio) > 0.01) {
     currentPixelRatio = nextRatio;
     renderer.setPixelRatio(currentPixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight, false);
+  }
+}
+
+// Performance budget check - warn and potentially reduce quality
+function checkPerformanceBudget() {
+  var info = renderer.info;
+  var tris = info.render.triangles;
+  var calls = info.render.calls;
+  
+  // If we're rendering too many triangles, log warning (helps debugging)
+  if (tris > 2000000) {
+    console.warn('Performance warning: ' + (tris / 1000000).toFixed(1) + 'M triangles, ' + calls + ' draw calls');
   }
 }
 
@@ -1418,6 +1549,7 @@ function animate(now) {
   }
 
   updateScaleContext();
+  updateParticleVisibility();
   uiElapsedMs += dtMs;
   if (uiElapsedMs >= UI_UPDATE_INTERVAL_MS) {
     updateUI();
@@ -1426,6 +1558,7 @@ function animate(now) {
   controls.autoRotate = !selectedPlanet && !cameraTween && !controlsDragging;
   controls.update();
   maybeAdjustResolution(dtMs);
+  checkPerformanceBudget();
   renderer.render(scene, camera);
   updatePerformanceHud(dtMs);
 }
