@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Izzi's Universe</title>
-    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -23,7 +23,37 @@
         <span class="brand-universe">Universe</span>
       </div>
       <div class="brand-line"></div>
+<<<<<<< HEAD
       <div class="brand-version">v0.10</div>
+=======
+      <div class="brand-version">v0.11</div>
+    </div>
+
+    <!-- Desktop performance telemetry -->
+    <div class="perf-shell" id="perfShell" aria-live="polite">
+      <section class="perf-panel" id="perfPanel" aria-label="Performance telemetry panel">
+        <header class="perf-header">
+          <div class="perf-header-copy">
+            <span class="perf-kicker">Diagnostics</span>
+            <h2>System Telemetry</h2>
+          </div>
+          <div class="perf-header-actions">
+            <button id="perfMenuBtn" type="button" class="perf-btn" aria-haspopup="true" aria-expanded="false">Metrics</button>
+            <button id="perfHideBtn" type="button" class="perf-btn perf-btn-ghost">Hide</button>
+          </div>
+        </header>
+        <div class="perf-grid" id="perfGrid"></div>
+      </section>
+      <aside class="perf-menu hidden" id="perfMenu" aria-label="Telemetry menu">
+        <div class="perf-menu-title">Visible Metrics</div>
+        <div class="perf-menu-actions">
+          <button id="perfShowAll" type="button" class="perf-btn perf-btn-mini">Show All</button>
+          <button id="perfHideAll" type="button" class="perf-btn perf-btn-mini perf-btn-ghost">Hide All</button>
+        </div>
+        <div class="perf-menu-list" id="perfMenuList"></div>
+      </aside>
+      <button id="perfShowBtn" type="button" class="perf-show-btn hidden">Show Performance</button>
+>>>>>>> 0edbd1f (feat(performance): add performance telemetry panel with metrics display and controls)
     </div>
 
     <!-- Scale indicator - bottom center -->
@@ -80,8 +110,8 @@
 
     <div id="tooltip" class="tooltip hidden"></div>
 
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="./main.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+    <script defer src="./main.js"></script>
   </body>
 </html>

@@ -8,6 +8,7 @@ const infoBar = document.getElementById("infoBar");
 const infoLabel = document.getElementById("infoLabel");
 const btnReset = document.getElementById("btnReset");
 const planetNav = document.getElementById("planetNav");
+<<<<<<< HEAD
 const perfPanel = document.getElementById("perfPanel");
 const perfFps = document.getElementById("perfFps");
 const perfFrameMs = document.getElementById("perfFrameMs");
@@ -16,7 +17,22 @@ const perfCalls = document.getElementById("perfCalls");
 const perfTris = document.getElementById("perfTris");
 const perfQuality = document.getElementById("perfQuality");
 const perfPixelRatio = document.getElementById("perfPixelRatio");
+=======
+const perfShell = document.getElementById("perfShell");
+const perfPanel = document.getElementById("perfPanel");
+const perfGrid = document.getElementById("perfGrid");
+const perfMenu = document.getElementById("perfMenu");
+const perfMenuList = document.getElementById("perfMenuList");
+const perfMenuBtn = document.getElementById("perfMenuBtn");
+const perfHideBtn = document.getElementById("perfHideBtn");
+const perfShowBtn = document.getElementById("perfShowBtn");
+const perfShowAllBtn = document.getElementById("perfShowAll");
+const perfHideAllBtn = document.getElementById("perfHideAll");
+>>>>>>> 0edbd1f (feat(performance): add performance telemetry panel with metrics display and controls)
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
+const isDesktopBrowser = !/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) &&
+  !!(window.matchMedia && window.matchMedia("(pointer: fine)").matches) &&
+  window.innerWidth >= 960;
 const query = new URLSearchParams(window.location.search);
 
 const QUALITY_PRESETS = {
@@ -111,6 +127,21 @@ let controlsDragging = false, cameraTween = null, pointerDownPos = null;
 // Gives fine control at slow speeds and big range at high speeds
 const POSITION_MODE_SIM = "sim";
 const POSITION_MODE_LIVE = "live";
+const PERFORMANCE_REFRESH_MS = 360;
+const PERFORMANCE_PANEL_STORAGE_KEY = "izzi.performance.panel.visible.v1";
+const PERFORMANCE_METRIC_STORAGE_KEY = "izzi.performance.metrics.visible.v1";
+const PERFORMANCE_METRICS = [
+  { key: "fps", label: "FPS" },
+  { key: "frame", label: "Frame Time" },
+  { key: "drawCalls", label: "Draw Calls" },
+  { key: "triangles", label: "Triangles" },
+  { key: "points", label: "Points" },
+  { key: "dpr", label: "Pixel Ratio" },
+  { key: "resolution", label: "Render Size" },
+  { key: "memory", label: "GPU Memory" },
+  { key: "quality", label: "Quality Mode" },
+  { key: "distance", label: "Camera Dist" },
+];
 
 function sliderToTimeWarp(v) {
   if (v <= 0) return 0.01;
@@ -145,6 +176,8 @@ let lastInfoLabel = "__init__";
 let lastInfoVisible = false;
 let lastActivePlanetName = "__init__";
 let lastScaleDist = -1;
+let lastGalaxyVisibleState = null;
+let lastUniverseVisibleState = null;
 let uiElapsedMs = UI_UPDATE_INTERVAL_MS;
 
 // Visibility state for particle systems
@@ -155,6 +188,16 @@ let lastLiveUpdateMs = 0;
 let frameStatsElapsedMs = 0;
 let frameStatsCount = 0;
 let dynamicResolutionElapsedMs = 0;
+let perfFrameElapsedMs = 0;
+let perfFrameCount = 0;
+let perfLastFrameMs = 16.7;
+let perfLastUpdateAt = 0;
+let perfPanelVisible = true;
+let perfMenuOpen = false;
+let performanceUIEnabled = false;
+let perfMetricsVisible = {};
+const perfMetricRows = {};
+const perfMetricValues = {};
 const adaptiveResolutionEnabled = query.get("adaptiveRes") !== "off";
 let perfHudElapsedMs = 0;
 let perfHudFrames = 0;
@@ -169,6 +212,8 @@ const GALAXY_REVEAL_FULL = 5200;
 const UNIVERSE_RADIUS = 24000000;
 const UNIVERSE_REVEAL_START = 18000;
 const UNIVERSE_REVEAL_FULL = 2600000;
+const GALAXY_VISIBILITY_MARGIN = 120;
+const UNIVERSE_VISIBILITY_MARGIN = 4200;
 
 const EARTH_TEXTURES = {
   day: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_day_4096.jpg",
@@ -424,9 +469,13 @@ setupSun();
 setupPlanets();
 setupAsteroidBelt();
 setupKuiperBelt();
-setupEvents();
 setupUI();
+<<<<<<< HEAD
 initPerformanceHud();
+=======
+setupPerformanceUI();
+setupEvents();
+>>>>>>> 0edbd1f (feat(performance): add performance telemetry panel with metrics display and controls)
 updateUI();
 loadEarthAssets();
 animate();
@@ -747,6 +796,7 @@ function setupKuiperBelt() {
 function setupMilkyWay() {
   galaxyGroup = new THREE.Group();
   galaxyGroup.rotation.set(THREE.Math.degToRad(26), THREE.Math.degToRad(-14), THREE.Math.degToRad(8));
+  galaxyGroup.visible = false;
   scene.add(galaxyGroup);
 
   var armCount = 56000 * Q | 0, armPos = new Float32Array(armCount * 3), armCol = new Float32Array(armCount * 3);
@@ -849,7 +899,9 @@ function setupMilkyWay() {
 }
 
 function setupUniverse() {
-  universeGroup = new THREE.Group(); scene.add(universeGroup);
+  universeGroup = new THREE.Group();
+  universeGroup.visible = false;
+  scene.add(universeGroup);
   var fieldCount = 160000 * Q | 0, fieldPos = new Float32Array(fieldCount * 3), fieldCol = new Float32Array(fieldCount * 3);
   var violet = new THREE.Color(0xb7bcff), amber = new THREE.Color(0xffd2a8), cyan = new THREE.Color(0xa3d7ff);
   for (var i = 0; i < fieldCount; i++) {
@@ -1084,6 +1136,7 @@ function applyLivePlanetPositions(unixMs) {
   }
 }
 function setPositionMode(mode) {
+  var previousMode = positionMode;
   positionMode = mode === POSITION_MODE_LIVE ? POSITION_MODE_LIVE : POSITION_MODE_SIM;
   if (timeScaleInput) timeScaleInput.disabled = positionMode === POSITION_MODE_LIVE;
 
@@ -1093,7 +1146,9 @@ function setPositionMode(mode) {
     lastLiveUpdateMs = liveNow;
     return;
   }
+  var switchedFromLive = previousMode === POSITION_MODE_LIVE && lastLiveUpdateMs > 0;
   lastLiveUpdateMs = 0;
+  if (!switchedFromLive) return;
 
   for (var i = 0; i < planets.length; i++) {
     var p = planets[i];
@@ -1141,6 +1196,204 @@ function setupUI() {
     })(navPlanets[i]);
   }
   planetNavItems = planetNav ? Array.prototype.slice.call(planetNav.querySelectorAll(".planet-item")) : [];
+}
+
+function getDefaultPerformanceMetricVisibility() {
+  var visibility = {};
+  for (var i = 0; i < PERFORMANCE_METRICS.length; i++) visibility[PERFORMANCE_METRICS[i].key] = true;
+  return visibility;
+}
+
+function loadPerformanceMetricVisibility() {
+  var defaults = getDefaultPerformanceMetricVisibility();
+  try {
+    var raw = localStorage.getItem(PERFORMANCE_METRIC_STORAGE_KEY);
+    if (!raw) return defaults;
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return defaults;
+    for (var i = 0; i < PERFORMANCE_METRICS.length; i++) {
+      var key = PERFORMANCE_METRICS[i].key;
+      defaults[key] = parsed[key] !== undefined ? !!parsed[key] : true;
+    }
+    return defaults;
+  } catch (err) {
+    return defaults;
+  }
+}
+
+function loadPerformancePanelVisibility() {
+  try {
+    var raw = localStorage.getItem(PERFORMANCE_PANEL_STORAGE_KEY);
+    if (raw === "0") return false;
+    if (raw === "1") return true;
+  } catch (err) {}
+  return true;
+}
+
+function savePerformanceMetricVisibility() {
+  try { localStorage.setItem(PERFORMANCE_METRIC_STORAGE_KEY, JSON.stringify(perfMetricsVisible)); } catch (err) {}
+}
+
+function savePerformancePanelVisibility() {
+  try { localStorage.setItem(PERFORMANCE_PANEL_STORAGE_KEY, perfPanelVisible ? "1" : "0"); } catch (err) {}
+}
+
+function setPerformanceMenuOpen(open) {
+  if (!performanceUIEnabled || !perfMenu || !perfMenuBtn) return;
+  perfMenuOpen = !!open;
+  perfMenu.classList.toggle("hidden", !perfMenuOpen);
+  perfMenuBtn.setAttribute("aria-expanded", perfMenuOpen ? "true" : "false");
+}
+
+function setPerformancePanelVisibility(visible) {
+  if (!performanceUIEnabled || !perfPanel || !perfShowBtn) return;
+  perfPanelVisible = !!visible;
+  perfPanel.classList.toggle("hidden", !perfPanelVisible);
+  perfShowBtn.classList.toggle("hidden", perfPanelVisible);
+  if (!perfPanelVisible) setPerformanceMenuOpen(false);
+  savePerformancePanelVisibility();
+}
+
+function setPerformanceMetricVisibility(metricKey, visible, skipPersist) {
+  perfMetricsVisible[metricKey] = !!visible;
+  if (perfMetricRows[metricKey]) perfMetricRows[metricKey].classList.toggle("hidden", !perfMetricsVisible[metricKey]);
+  if (!skipPersist) savePerformanceMetricVisibility();
+}
+
+function setAllPerformanceMetricVisibility(visible) {
+  for (var i = 0; i < PERFORMANCE_METRICS.length; i++) {
+    var key = PERFORMANCE_METRICS[i].key;
+    setPerformanceMetricVisibility(key, visible, true);
+  }
+  savePerformanceMetricVisibility();
+  if (perfMenuList) {
+    var inputs = perfMenuList.querySelectorAll("input[type='checkbox']");
+    for (var ii = 0; ii < inputs.length; ii++) inputs[ii].checked = !!visible;
+  }
+}
+
+function setupPerformanceUI() {
+  if (!perfShell || !perfPanel || !perfGrid || !perfMenu || !perfMenuList) return;
+  if (!isDesktopBrowser) {
+    perfShell.classList.add("hidden");
+    return;
+  }
+
+  perfMetricsVisible = loadPerformanceMetricVisibility();
+  perfPanelVisible = loadPerformancePanelVisibility();
+  perfGrid.innerHTML = "";
+  perfMenuList.innerHTML = "";
+
+  for (var i = 0; i < PERFORMANCE_METRICS.length; i++) {
+    var def = PERFORMANCE_METRICS[i];
+
+    var row = document.createElement("div");
+    row.className = "perf-metric";
+    row.dataset.metric = def.key;
+    var label = document.createElement("span");
+    label.className = "perf-metric-label";
+    label.textContent = def.label;
+    var value = document.createElement("span");
+    value.className = "perf-metric-value";
+    value.textContent = "--";
+    row.appendChild(label);
+    row.appendChild(value);
+    perfGrid.appendChild(row);
+    perfMetricRows[def.key] = row;
+    perfMetricValues[def.key] = value;
+    setPerformanceMetricVisibility(def.key, perfMetricsVisible[def.key], true);
+
+    var menuItem = document.createElement("label");
+    menuItem.className = "perf-menu-item";
+    var input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!perfMetricsVisible[def.key];
+    input.dataset.metric = def.key;
+    input.addEventListener("change", function(e) {
+      setPerformanceMetricVisibility(e.target.dataset.metric, e.target.checked);
+    });
+    var menuLabel = document.createElement("span");
+    menuLabel.className = "perf-menu-label";
+    menuLabel.textContent = def.label;
+    menuItem.appendChild(input);
+    menuItem.appendChild(menuLabel);
+    perfMenuList.appendChild(menuItem);
+  }
+
+  if (perfMenuBtn) perfMenuBtn.addEventListener("click", function() { setPerformanceMenuOpen(!perfMenuOpen); });
+  if (perfHideBtn) perfHideBtn.addEventListener("click", function() { setPerformancePanelVisibility(false); });
+  if (perfShowBtn) perfShowBtn.addEventListener("click", function() { setPerformancePanelVisibility(true); });
+  if (perfShowAllBtn) perfShowAllBtn.addEventListener("click", function() { setAllPerformanceMetricVisibility(true); });
+  if (perfHideAllBtn) perfHideAllBtn.addEventListener("click", function() { setAllPerformanceMetricVisibility(false); });
+
+  document.addEventListener("pointerdown", function(e) {
+    if (!perfMenuOpen) return;
+    if (!perfShell.contains(e.target)) setPerformanceMenuOpen(false);
+  });
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") setPerformanceMenuOpen(false);
+  });
+
+  performanceUIEnabled = true;
+  setPerformanceMenuOpen(false);
+  setPerformancePanelVisibility(perfPanelVisible);
+  updatePerformanceTelemetry(performance.now(), true);
+}
+
+function formatMetricCount(value) {
+  if (!Number.isFinite(value)) return "--";
+  var rounded = Math.round(value);
+  if (rounded >= 1000000) return (rounded / 1000000).toFixed(2) + "M";
+  if (rounded >= 1000) return rounded.toLocaleString();
+  return String(rounded);
+}
+
+function formatDistance(value) {
+  if (!Number.isFinite(value)) return "--";
+  if (value >= 1000000) return (value / 1000000).toFixed(2) + "M";
+  if (value >= 1000) return (value / 1000).toFixed(2) + "K";
+  return value.toFixed(1);
+}
+
+function updatePerformanceMetricValue(metricKey, value) {
+  var node = perfMetricValues[metricKey];
+  if (!node) return;
+  if (node.textContent !== value) node.textContent = value;
+}
+
+function samplePerformanceTelemetry(dtMs) {
+  if (!performanceUIEnabled) return;
+  perfFrameElapsedMs += dtMs;
+  perfFrameCount += 1;
+  perfLastFrameMs = dtMs;
+}
+
+function updatePerformanceTelemetry(now, force) {
+  if (!performanceUIEnabled) return;
+  if (!force && ((now - perfLastUpdateAt) < PERFORMANCE_REFRESH_MS || perfFrameCount < 10)) return;
+
+  var fps = perfFrameElapsedMs > 0 ? (perfFrameCount * 1000) / perfFrameElapsedMs : 0;
+  var renderInfo = renderer.info.render;
+  var memoryInfo = renderer.info.memory;
+  var renderWidth = Math.round(window.innerWidth * currentPixelRatio);
+  var renderHeight = Math.round(window.innerHeight * currentPixelRatio);
+  var distanceToTarget = camera.position.distanceTo(controls.target);
+  var qualityLabel = qualityTier.toUpperCase() + (adaptiveResolutionEnabled ? " / ADAPT" : " / FIXED");
+
+  updatePerformanceMetricValue("fps", fps.toFixed(1));
+  updatePerformanceMetricValue("frame", perfLastFrameMs.toFixed(2) + " ms");
+  updatePerformanceMetricValue("drawCalls", formatMetricCount(renderInfo.calls));
+  updatePerformanceMetricValue("triangles", formatMetricCount(renderInfo.triangles));
+  updatePerformanceMetricValue("points", formatMetricCount(renderInfo.points));
+  updatePerformanceMetricValue("dpr", currentPixelRatio.toFixed(2));
+  updatePerformanceMetricValue("resolution", renderWidth + " x " + renderHeight);
+  updatePerformanceMetricValue("memory", formatMetricCount(memoryInfo.geometries) + "g / " + formatMetricCount(memoryInfo.textures) + "t");
+  updatePerformanceMetricValue("quality", qualityLabel);
+  updatePerformanceMetricValue("distance", formatDistance(distanceToTarget));
+
+  perfFrameElapsedMs = 0;
+  perfFrameCount = 0;
+  perfLastUpdateAt = now;
 }
 
 function updateUI() {
@@ -1227,7 +1480,12 @@ function setupEvents() {
   canvas.addEventListener("pointerleave", function() { pointerInside = false; hoveredPlanet = null; tooltip.classList.add("hidden"); pointerNdc.set(9, 9); });
   canvas.addEventListener("dblclick", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
   if (btnReset) btnReset.addEventListener("click", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
-  var onResize = function() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight, false); };
+  var onResize = function() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    updatePerformanceTelemetry(performance.now(), true);
+  };
   window.addEventListener("resize", onResize);
   if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
   document.addEventListener("touchmove", function(e) { if (e.target === canvas) e.preventDefault(); }, { passive: false });
@@ -1313,15 +1571,28 @@ function updateScaleContext() {
   lastScaleDist = dist;
   var gA = THREE.MathUtils.clamp((dist - GALAXY_REVEAL_START) / (GALAXY_REVEAL_FULL - GALAXY_REVEAL_START), 0, 1);
   var uA = THREE.MathUtils.clamp((dist - UNIVERSE_REVEAL_START) / (UNIVERSE_REVEAL_FULL - UNIVERSE_REVEAL_START), 0, 1);
+  var galaxyVisible = dist >= (GALAXY_REVEAL_START - GALAXY_VISIBILITY_MARGIN);
+  var universeVisible = dist >= (UNIVERSE_REVEAL_START - UNIVERSE_VISIBILITY_MARGIN);
 
-  if (milkyWayBand) milkyWayBand.material.opacity = (0.05 + gA * 0.5) * (1 - uA * 0.45);
-  if (galacticCenterGlow) galacticCenterGlow.material.opacity = (0.04 + gA * 0.2) * (1 - uA * 0.5);
-  if (solarSystemMarker) {
-    solarSystemMarker.material.opacity = (0.08 + gA * 0.58) * (1 - uA * 0.65);
-    var s = 1 + gA * 2.3 - uA * 1.6; solarSystemMarker.scale.set(s, s, s);
+  if (galaxyGroup && galaxyVisible !== lastGalaxyVisibleState) {
+    galaxyGroup.visible = galaxyVisible;
+    lastGalaxyVisibleState = galaxyVisible;
   }
-  if (solarSystemLabel) solarSystemLabel.material.opacity = Math.pow(gA, 1.3) * (1 - uA * 0.7) * 0.95;
-  for (var i = 0; i < nebulaeMeshes.length; i++) nebulaeMeshes[i].material.opacity = Math.pow(gA, 1.5) * (1 - uA * 0.7) * 0.6;
+  if (universeGroup && universeVisible !== lastUniverseVisibleState) {
+    universeGroup.visible = universeVisible;
+    lastUniverseVisibleState = universeVisible;
+  }
+
+  if (galaxyVisible) {
+    if (milkyWayBand) milkyWayBand.material.opacity = (0.05 + gA * 0.5) * (1 - uA * 0.45);
+    if (galacticCenterGlow) galacticCenterGlow.material.opacity = (0.04 + gA * 0.2) * (1 - uA * 0.5);
+    if (solarSystemMarker) {
+      solarSystemMarker.material.opacity = (0.08 + gA * 0.58) * (1 - uA * 0.65);
+      var s = 1 + gA * 2.3 - uA * 1.6; solarSystemMarker.scale.set(s, s, s);
+    }
+    if (solarSystemLabel) solarSystemLabel.material.opacity = Math.pow(gA, 1.3) * (1 - uA * 0.7) * 0.95;
+    for (var i = 0; i < nebulaeMeshes.length; i++) nebulaeMeshes[i].material.opacity = Math.pow(gA, 1.5) * (1 - uA * 0.7) * 0.6;
+  }
 
   if (asteroidBeltMesh) {
     var beltFade = 1 - gA * 0.9;
@@ -1332,16 +1603,18 @@ function updateScaleContext() {
   }
   if (kuiperBeltMesh) kuiperBeltMesh.material.opacity = 0.4 * (1 - gA * 0.9);
 
-  if (universeField) universeField.material.opacity = uA * 0.86;
-  if (universeClusters) universeClusters.material.opacity = uA * 0.45;
-  if (milkyWayUniverseMarker) { milkyWayUniverseMarker.material.opacity = uA * 0.82; var us = 1 + uA * 0.8; milkyWayUniverseMarker.scale.set(us, us, us); }
-  if (milkyWayUniverseLabel) milkyWayUniverseLabel.material.opacity = Math.pow(uA, 1.2) * 0.96;
-  if (universeLabel) universeLabel.material.opacity = Math.pow(uA, 1.5) * 0.9;
+  if (universeVisible) {
+    if (universeField) universeField.material.opacity = uA * 0.86;
+    if (universeClusters) universeClusters.material.opacity = uA * 0.45;
+    if (milkyWayUniverseMarker) { milkyWayUniverseMarker.material.opacity = uA * 0.82; var us = 1 + uA * 0.8; milkyWayUniverseMarker.scale.set(us, us, us); }
+    if (milkyWayUniverseLabel) milkyWayUniverseLabel.material.opacity = Math.pow(uA, 1.2) * 0.96;
+    if (universeLabel) universeLabel.material.opacity = Math.pow(uA, 1.5) * 0.9;
 
-  for (var i = 0; i < namedGalaxies.length; i++) {
-    namedGalaxies[i].points.material.opacity = uA * 0.7;
-    namedGalaxies[i].glow.material.opacity = uA * 0.25;
-    namedGalaxies[i].label.material.opacity = Math.pow(uA, 1.3) * 0.85;
+    for (var i = 0; i < namedGalaxies.length; i++) {
+      namedGalaxies[i].points.material.opacity = uA * 0.7;
+      namedGalaxies[i].glow.material.opacity = uA * 0.25;
+      namedGalaxies[i].label.material.opacity = Math.pow(uA, 1.3) * 0.85;
+    }
   }
   for (var i = 0; i < orbitLines.length; i++) {
     var base = orbitLines[i].userData.baseOpacity || 0.4;
@@ -1481,9 +1754,11 @@ function checkPerformanceBudget() {
 
 function animate(now) {
   requestAnimationFrame(animate);
+  var rafNow = now || performance.now();
   var dt = Math.min(clock.getDelta(), 0.05);
   var dtMs = dt * 1000;
   var nowMs = Date.now();
+  samplePerformanceTelemetry(dtMs);
   var simDays = 0;
   if (positionMode === POSITION_MODE_SIM) {
     // Smooth interpolation toward target speed — prevents jerky jumps
@@ -1560,7 +1835,11 @@ function animate(now) {
   maybeAdjustResolution(dtMs);
   checkPerformanceBudget();
   renderer.render(scene, camera);
+<<<<<<< HEAD
   updatePerformanceHud(dtMs);
+=======
+  updatePerformanceTelemetry(rafNow, false);
+>>>>>>> 0edbd1f (feat(performance): add performance telemetry panel with metrics display and controls)
 }
 
 setPositionMode(positionMode);
