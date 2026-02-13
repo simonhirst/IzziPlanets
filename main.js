@@ -141,6 +141,7 @@ const pointerUpPos = new THREE.Vector2();
 const clock = new THREE.Clock();
 let pointerInside = false, hoveredPlanet = null, selectedPlanet = null, selectedAngleIndex = 0;
 let controlsDragging = false, cameraTween = null, pointerDownPos = null;
+let pointerMoved = false;
 
 // Exponential slider mapping: 0-100 → 0.01 to 365 sim-days/sec
 // Gives fine control at slow speeds and big range at high speeds
@@ -212,6 +213,11 @@ let lastGalaxyVisibleState = null;
 let lastUniverseVisibleState = null;
 let lastAsteroidVisibleState = null;
 let lastKuiperVisibleState = null;
+let lastGA = -1, lastUA = -1;
+let lastSolarSystemDetailVisible = null;
+const OPACITY_EPSILON = 0.003;
+const SOLAR_DETAIL_HIDE_DIST = 1800;
+const SOLAR_DETAIL_SHOW_DIST = 1500;
 let uiElapsedMs = UI_UPDATE_INTERVAL_MS;
 let hoverElapsedMs = HOVER_UPDATE_INTERVAL_MS;
 let lastLiveUpdateMs = 0;
@@ -233,6 +239,7 @@ const perfMetricValues = {};
 const uiComponentInputs = {};
 const adaptiveResolutionEnabled = query.get("adaptiveRes") !== "off";
 const planetImpostorTextureCache = {};
+let tabHidden = false;
 let benchmarkStartedAt = 0;
 let benchmarkDone = false;
 let benchmarkLastRafMs = 0;
@@ -976,14 +983,14 @@ function setupMilkyWay() {
   freezeStaticObject(galacticBar);
   galaxyGroup.add(galacticBar);
 
-  galacticCenterGlow = new THREE.Mesh(new THREE.SphereGeometry(850, 52, 52),
+  galacticCenterGlow = new THREE.Mesh(new THREE.SphereGeometry(850, 16, 12),
     new THREE.MeshBasicMaterial({ color: 0xd2e1ff, transparent: true, opacity: 0.04, side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending }));
   disableFrustumCulling(galacticCenterGlow);
   freezeStaticObject(galacticCenterGlow);
   galaxyGroup.add(galacticCenterGlow);
 
   // Sagittarius A*
-  var sgrA = new THREE.Mesh(new THREE.SphereGeometry(60, 24, 24),
+  var sgrA = new THREE.Mesh(new THREE.SphereGeometry(60, 12, 8),
     new THREE.MeshBasicMaterial({ color: 0xffeecc, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending, depthWrite: false }));
   disableFrustumCulling(sgrA);
   freezeStaticObject(sgrA);
@@ -1000,7 +1007,7 @@ function setupMilkyWay() {
   ];
   for (var ni = 0; ni < nebData.length; ni++) {
     var nd = nebData[ni];
-    var nebMesh = new THREE.Mesh(new THREE.SphereGeometry(nd.r, 24, 24),
+    var nebMesh = new THREE.Mesh(new THREE.SphereGeometry(nd.r, 12, 8),
       new THREE.MeshBasicMaterial({ color: nd.color, transparent: true, opacity: 0.03, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
     nebMesh.position.set(nd.pos[0], nd.pos[1], nd.pos[2]);
     disableFrustumCulling(nebMesh);
@@ -1019,7 +1026,7 @@ function setupMilkyWay() {
   var solarPosition = new THREE.Vector3(Math.cos(solarAngle) * SOLAR_GALACTIC_RADIUS, 14, Math.sin(solarAngle) * SOLAR_GALACTIC_RADIUS);
   galaxyGroup.position.copy(solarPosition).multiplyScalar(-1);
 
-  solarSystemMarker = new THREE.Mesh(new THREE.SphereGeometry(95, 18, 18),
+  solarSystemMarker = new THREE.Mesh(new THREE.SphereGeometry(95, 12, 8),
     new THREE.MeshBasicMaterial({ color: 0x9ec7ff, transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending, depthWrite: false }));
   solarSystemMarker.position.copy(solarPosition); galaxyGroup.add(solarSystemMarker);
 
@@ -1155,7 +1162,7 @@ function setupUniverse() {
     disableFrustumCulling(pts);
     freezeStaticObject(pts);
     group.add(pts);
-    var gGlow = new THREE.Mesh(new THREE.SphereGeometry(gd.size * 0.12, 16, 16),
+    var gGlow = new THREE.Mesh(new THREE.SphereGeometry(gd.size * 0.12, 10, 8),
       new THREE.MeshBasicMaterial({ color: gd.color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
     disableFrustumCulling(gGlow);
     freezeStaticObject(gGlow);
@@ -1172,7 +1179,7 @@ function setupUniverse() {
     namedGalaxies.push({ group: group, points: pts, glow: gGlow, label: gLabel });
   }
 
-  milkyWayUniverseMarker = new THREE.Mesh(new THREE.SphereGeometry(1500, 24, 24),
+  milkyWayUniverseMarker = new THREE.Mesh(new THREE.SphereGeometry(1500, 12, 8),
     new THREE.MeshBasicMaterial({ color: 0x8eb7ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
   universeGroup.add(milkyWayUniverseMarker);
   milkyWayUniverseLabel = makeTextSprite("Milky Way (our galaxy)");
@@ -1837,10 +1844,10 @@ function setupEvents() {
   if (positionModeInput) {
     positionModeInput.addEventListener("change", function() { setPositionMode(positionModeInput.value); });
   }
-  canvas.addEventListener("pointermove", function(e) { pointerInside = true; pointerPx.set(e.clientX, e.clientY); updatePointer(e); });
-  canvas.addEventListener("pointerdown", function(e) { pointerInside = true; pointerDownPos = new THREE.Vector2(e.clientX, e.clientY); updatePointer(e); });
+  canvas.addEventListener("pointermove", function(e) { pointerInside = true; pointerMoved = true; pointerPx.set(e.clientX, e.clientY); updatePointer(e); });
+  canvas.addEventListener("pointerdown", function(e) { pointerInside = true; pointerMoved = true; pointerDownPos = new THREE.Vector2(e.clientX, e.clientY); updatePointer(e); });
   canvas.addEventListener("pointerup", function(e) {
-    pointerInside = true;
+    pointerInside = true; pointerMoved = true;
     updatePointer(e); if (!pointerDownPos) return;
     updateHover();
     pointerUpPos.set(e.clientX, e.clientY);
@@ -1888,6 +1895,10 @@ function setupEvents() {
   window.addEventListener("resize", onResize);
   if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
   document.addEventListener("touchmove", function(e) { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+  document.addEventListener("visibilitychange", function() {
+    tabHidden = document.hidden;
+    if (!tabHidden) clock.getDelta(); // drain accumulated delta after resume
+  });
 }
 
 function updatePointer(e) {
@@ -1924,7 +1935,9 @@ function updateCameraTween(now) {
 
 function updateHover(distanceToTarget) {
   if (!pointerInside) return;
-  
+  if (!pointerMoved) return;
+  pointerMoved = false;
+
   // Skip raycasting when zoomed far out.
   var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
   if (dist > 500) {
@@ -1979,6 +1992,38 @@ function updateScaleContext(distanceToTarget) {
     lastUniverseVisibleState = universeVisible;
   }
 
+  // Skip material opacity writes if fade factors haven't changed meaningfully
+  var gaChanged = Math.abs(gA - lastGA) > OPACITY_EPSILON;
+  var uaChanged = Math.abs(uA - lastUA) > OPACITY_EPSILON;
+  if (!gaChanged && !uaChanged) {
+    // Still check visibility gating which is cheap
+    if (useUnifiedVisibility) {
+      var asteroidVisible = dist < 500 && dist > 5;
+      if (asteroidBeltMesh && asteroidVisible !== lastAsteroidVisibleState) {
+        asteroidBeltMesh.visible = asteroidVisible;
+        lastAsteroidVisibleState = asteroidVisible;
+      }
+      var kuiperVisible = dist < 1000 && dist > 20;
+      if (kuiperBeltMesh && kuiperVisible !== lastKuiperVisibleState) {
+        kuiperBeltMesh.visible = kuiperVisible;
+        lastKuiperVisibleState = kuiperVisible;
+      }
+      var solarDetailVisible = dist < SOLAR_DETAIL_HIDE_DIST;
+      if (!solarDetailVisible && lastSolarSystemDetailVisible !== false) {
+        for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = false; }
+        for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = false;
+        lastSolarSystemDetailVisible = false;
+      } else if (solarDetailVisible && dist < SOLAR_DETAIL_SHOW_DIST && lastSolarSystemDetailVisible !== true) {
+        for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = true; }
+        for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = true;
+        lastSolarSystemDetailVisible = true;
+      }
+    }
+    return;
+  }
+  lastGA = gA;
+  lastUA = uA;
+
   if (galaxyVisible) {
     if (milkyWayBand) milkyWayBand.material.opacity = (0.05 + gA * 0.5) * (1 - uA * 0.45);
     if (galacticCenterGlow) galacticCenterGlow.material.opacity = (0.04 + gA * 0.2) * (1 - uA * 0.5);
@@ -1990,14 +2035,14 @@ function updateScaleContext(distanceToTarget) {
     for (var i = 0; i < nebulaeMeshes.length; i++) nebulaeMeshes[i].material.opacity = Math.pow(gA, 1.5) * (1 - uA * 0.7) * 0.6;
   }
 
-  if (asteroidBeltMesh) {
+  if (gaChanged && asteroidBeltMesh) {
     var beltFade = 1 - gA * 0.9;
     for (var bi = 0; bi < asteroidBeltFadeMaterials.length; bi++) {
       var mat = asteroidBeltFadeMaterials[bi];
       mat.opacity = mat._baseOp * beltFade;
     }
   }
-  if (kuiperBeltMesh) kuiperBeltMesh.material.opacity = 0.4 * (1 - gA * 0.9);
+  if (gaChanged && kuiperBeltMesh) kuiperBeltMesh.material.opacity = 0.4 * (1 - gA * 0.9);
 
   if (useUnifiedVisibility) {
     var asteroidVisible = dist < 500 && dist > 5;
@@ -2010,9 +2055,20 @@ function updateScaleContext(distanceToTarget) {
       kuiperBeltMesh.visible = kuiperVisible;
       lastKuiperVisibleState = kuiperVisible;
     }
+    // Hide solar system detail (planet LODs, orbits) at galaxy+ distances
+    var solarDetailVisible = dist < SOLAR_DETAIL_HIDE_DIST;
+    if (!solarDetailVisible && lastSolarSystemDetailVisible !== false) {
+      for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = false; }
+      for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = false;
+      lastSolarSystemDetailVisible = false;
+    } else if (solarDetailVisible && dist < SOLAR_DETAIL_SHOW_DIST && lastSolarSystemDetailVisible !== true) {
+      for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = true; }
+      for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = true;
+      lastSolarSystemDetailVisible = true;
+    }
   }
 
-  if (universeVisible) {
+  if (universeVisible && uaChanged) {
     if (universeField) universeField.material.opacity = uA * 0.86;
     if (universeClusters) universeClusters.material.opacity = uA * 0.45;
     if (milkyWayUniverseMarker) { milkyWayUniverseMarker.material.opacity = uA * 0.82; var us = 1 + uA * 0.8; milkyWayUniverseMarker.scale.set(us, us, us); }
@@ -2025,9 +2081,10 @@ function updateScaleContext(distanceToTarget) {
       namedGalaxies[i].label.material.opacity = Math.pow(uA, 1.3) * 0.85;
     }
   }
+  var orbitFade = (1 - gA * 0.82) * (1 - uA * 0.8);
   for (var i = 0; i < orbitLines.length; i++) {
     var base = orbitLines[i].userData.baseOpacity || 0.4;
-    orbitLines[i].material.opacity = base * (1 - gA * 0.82) * (1 - uA * 0.8);
+    orbitLines[i].material.opacity = base * orbitFade;
   }
 }
 
@@ -2097,6 +2154,7 @@ function maybeAdjustResolution(dtMs) {
 
 function animate(now) {
   requestAnimationFrame(animate);
+  if (tabHidden) return;
   if (BENCHMARK_MODE) benchmarkAnimateTicks += 1;
   var rafNow = now || performance.now();
   if (BENCHMARK_MODE && benchmarkLastRafMs === 0) benchmarkLastRafMs = rafNow;
@@ -2121,40 +2179,44 @@ function animate(now) {
   }
   updateCameraTween(now || 0);
 
-  for (var i = 0; i < planets.length; i++) {
-    var p = planets[i];
-    if (positionMode === POSITION_MODE_SIM || !ORBITAL_ELEMENTS[p.def.name]) {
-      p.orbitPivot.rotation.y += (Math.PI * 2 * simDays) / p.def.orbitDays;
-      var spinSign = Math.sign(p.def.spinDays) || 1;
-      p.spin += ((Math.PI * 2 * simDays) / Math.abs(p.def.spinDays)) * spinSign;
-      p.mesh.rotation.y = p.spin;
-    } else {
-      var spinSignLive = Math.sign(p.def.spinDays) || 1;
-      var rotCycles = (nowMs / 86400000) / Math.abs(p.def.spinDays);
-      var spin = (rotCycles - Math.floor(rotCycles)) * Math.PI * 2;
-      p.mesh.rotation.y = spin * spinSignLive;
+  // Skip planet/moon updates when they're not visible (galaxy+ distance)
+  var solarDetailActive = lastSolarSystemDetailVisible !== false;
+  if (solarDetailActive) {
+    for (var i = 0; i < planets.length; i++) {
+      var p = planets[i];
+      if (positionMode === POSITION_MODE_SIM || !ORBITAL_ELEMENTS[p.def.name]) {
+        p.orbitPivot.rotation.y += (Math.PI * 2 * simDays) / p.def.orbitDays;
+        var spinSign = Math.sign(p.def.spinDays) || 1;
+        p.spin += ((Math.PI * 2 * simDays) / Math.abs(p.def.spinDays)) * spinSign;
+        p.mesh.rotation.y = p.spin;
+      } else {
+        var spinSignLive = Math.sign(p.def.spinDays) || 1;
+        var rotCycles = (nowMs / 86400000) / Math.abs(p.def.spinDays);
+        var spin = (rotCycles - Math.floor(rotCycles)) * Math.PI * 2;
+        p.mesh.rotation.y = spin * spinSignLive;
+      }
+      if (p.clouds) p.clouds.rotation.y += simDays * 0.15;
+      if (p.atmosphere) p.atmosphere.rotation.y += dt * 0.02;
+      var h = hoveredPlanet === p ? 1 : selectedPlanet === p ? 0.7 : 0;
+      p.highlight += (h - p.highlight) * (1 - Math.exp(-dt * 10));
+      var scale = 1 + p.highlight * 0.085;
+      p.mesh.scale.set(scale, scale, scale);
+      p.material.emissiveIntensity = 0.05 + p.highlight * 0.3;
     }
-    if (p.clouds) p.clouds.rotation.y += simDays * 0.15;
-    if (p.atmosphere) p.atmosphere.rotation.y += dt * 0.02;
-    var h = hoveredPlanet === p ? 1 : selectedPlanet === p ? 0.7 : 0;
-    p.highlight += (h - p.highlight) * (1 - Math.exp(-dt * 10));
-    var scale = 1 + p.highlight * 0.085;
-    p.mesh.scale.set(scale, scale, scale);
-    p.material.emissiveIntensity = 0.05 + p.highlight * 0.3;
-  }
 
-  for (var i = 0; i < allMoonRefs.length; i++) {
-    var m = allMoonRefs[i];
-    if (positionMode === POSITION_MODE_SIM) {
-      m.orbitPivot.rotation.y += (m.retrograde ? -1 : 1) * (Math.PI * 2 * simDays) / m.orbitDays;
-      m.spin += (Math.PI * 2 * simDays) / m.spinDays;
-      m.mesh.rotation.y = m.spin;
-    } else {
-      var moonDir = m.retrograde ? -1 : 1;
-      var moonOrbCycles = (nowMs / 86400000) / m.orbitDays;
-      m.orbitPivot.rotation.y = moonDir * (moonOrbCycles - Math.floor(moonOrbCycles)) * Math.PI * 2;
-      var moonSpinCycles = (nowMs / 86400000) / m.spinDays;
-      m.mesh.rotation.y = (moonSpinCycles - Math.floor(moonSpinCycles)) * Math.PI * 2;
+    for (var i = 0; i < allMoonRefs.length; i++) {
+      var m = allMoonRefs[i];
+      if (positionMode === POSITION_MODE_SIM) {
+        m.orbitPivot.rotation.y += (m.retrograde ? -1 : 1) * (Math.PI * 2 * simDays) / m.orbitDays;
+        m.spin += (Math.PI * 2 * simDays) / m.spinDays;
+        m.mesh.rotation.y = m.spin;
+      } else {
+        var moonDir = m.retrograde ? -1 : 1;
+        var moonOrbCycles = (nowMs / 86400000) / m.orbitDays;
+        m.orbitPivot.rotation.y = moonDir * (moonOrbCycles - Math.floor(moonOrbCycles)) * Math.PI * 2;
+        var moonSpinCycles = (nowMs / 86400000) / m.spinDays;
+        m.mesh.rotation.y = (moonSpinCycles - Math.floor(moonSpinCycles)) * Math.PI * 2;
+      }
     }
   }
 
@@ -2169,7 +2231,7 @@ function animate(now) {
     else selectedCameraOffset.copy(camera.position).sub(controls.target);
   }
 
-  cameraDistance = camera.position.distanceTo(controls.target);
+  if (selectedPlanet || cameraTween) cameraDistance = camera.position.distanceTo(controls.target);
   updateScaleContext(cameraDistance);
   if (!useUnifiedVisibility) updateParticleVisibilityLegacy(cameraDistance);
   uiElapsedMs += dtMs;
