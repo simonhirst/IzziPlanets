@@ -394,7 +394,7 @@ body::after {
   width: min(520px, calc(100vw - 48px));
   padding: 10px 16px 18px;
   z-index: 10;
-  pointer-events: none;
+  pointer-events: auto;
   background: var(--glass);
   border: 1px solid var(--panel-border-soft);
   border-radius: var(--radius);
@@ -410,6 +410,10 @@ body::after {
   height: 28px;
   display: flex;
   align-items: center;
+  cursor: ew-resize;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .scale-track::before {
@@ -792,7 +796,13 @@ body::after {
 .tooltip.hidden { display: none; }
 
 @media (max-width: 960px), (hover: none), (pointer: coarse) {
-  .perf-shell { display: none !important; }
+  .perf-shell {
+    left: calc(10px + var(--safe-left));
+    bottom: calc(12px + var(--safe-bottom));
+    width: min(300px, calc(100vw - 20px));
+    gap: 8px;
+    z-index: 18;
+  }
 }
 
 /* ============================================
@@ -893,16 +903,36 @@ body::after {
   .planet-au { font-size: 0.36rem; padding-left: 4px; }
 
   .perf-panel {
-    top: auto;
-    bottom: calc(12px + var(--safe-bottom));
-    left: calc(10px + var(--safe-left));
-    width: 146px;
-    padding: 8px 9px;
+    width: 100%;
+    padding: 0;
     border-radius: 9px;
   }
-  .perf-title { font-size: 0.46rem; margin-bottom: 5px; }
-  .perf-k { font-size: 0.44rem; }
-  .perf-v { font-size: 0.48rem; }
+  .perf-header {
+    padding: 11px 11px 9px;
+    gap: 8px;
+  }
+  .perf-grid {
+    padding: 4px 8px 8px;
+  }
+  .perf-metric {
+    padding: 7px 6px;
+  }
+  .perf-metric-label { font-size: 0.49rem; }
+  .perf-metric-value { font-size: 0.57rem; }
+  .perf-menu {
+    width: 100%;
+    padding: 10px 10px 8px;
+  }
+  .perf-menu-list {
+    grid-template-columns: 1fr;
+    max-height: 40vh;
+    overflow: auto;
+  }
+  .perf-show-btn {
+    min-height: 28px;
+    font-size: 0.47rem;
+    letter-spacing: 0.1em;
+  }
 }
 
 /* ============================================
@@ -984,5 +1014,8 @@ body::after {
   .planet-item { padding-top: 2px; padding-bottom: 2px; }
   .brand-version { display: none; }
   .brand-line { display: none; }
-  .perf-panel { display: none; }
+  .perf-shell {
+    width: min(260px, calc(100vw - 14px));
+    bottom: calc(6px + var(--safe-bottom));
+  }
 }

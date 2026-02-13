@@ -4,6 +4,8 @@ const timeScaleInput = document.getElementById("timeScale");
 const positionModeInput = document.getElementById("positionMode");
 const scaleFill = document.getElementById("scaleFill");
 const scaleThumb = document.getElementById("scaleThumb");
+const scaleBar = document.querySelector(".scale-bar");
+const scaleTrack = scaleBar ? scaleBar.querySelector(".scale-track") : null;
 const infoBar = document.getElementById("infoBar");
 const infoLabel = document.getElementById("infoLabel");
 const btnReset = document.getElementById("btnReset");
@@ -181,6 +183,7 @@ const nebulaeMeshes = [];
 const asteroidBeltFadeMaterials = [];
 let planetNavItems = [];
 let lastScalePct = -1;
+let scaleScrubActive = false;
 let lastInfoLabel = "__init__";
 let lastInfoVisible = false;
 let lastActivePlanetName = "__init__";
@@ -1424,7 +1427,7 @@ function setAllPerformanceMetricVisibility(visible) {
 
 function setupPerformanceUI() {
   if (!perfShell || !perfPanel || !perfGrid || !perfMenu || !perfMenuList) return;
-  if (BENCHMARK_MODE || !isDesktopBrowser) {
+  if (BENCHMARK_MODE) {
     perfShell.classList.add("hidden");
     return;
   }
@@ -1601,10 +1604,7 @@ function updatePerformanceTelemetry(now, force, distanceToTarget) {
   perfLastUpdateAt = now;
 }
 
-function updateUI(distanceToTarget) {
-  var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
-  // Scale bar position: map camera distance to 0-100%
-  // Sun ~2-50, Asteroids ~50-200, Kuiper ~200-900, Milky Way ~900-18000, Local Group ~18000-2600000, Universe ~2600000+
+function distanceToScalePct(dist) {
   var pct = 0;
   if (dist < 50) pct = (dist / 50) * 18;
   else if (dist < 200) pct = 18 + ((dist - 50) / 150) * 14;
@@ -1612,7 +1612,48 @@ function updateUI(distanceToTarget) {
   else if (dist < UNIVERSE_REVEAL_START) pct = 55 + ((dist - GALAXY_REVEAL_START) / (UNIVERSE_REVEAL_START - GALAXY_REVEAL_START)) * 23;
   else if (dist < UNIVERSE_REVEAL_FULL) pct = 78 + ((dist - UNIVERSE_REVEAL_START) / (UNIVERSE_REVEAL_FULL - UNIVERSE_REVEAL_START)) * 22;
   else pct = 100;
-  pct = Math.min(100, Math.max(0, pct));
+  return Math.min(100, Math.max(0, pct));
+}
+
+function scalePctToDistance(pct) {
+  var clampedPct = Math.min(100, Math.max(0, pct));
+  if (clampedPct < 18) return (clampedPct / 18) * 50;
+  if (clampedPct < 32) return 50 + ((clampedPct - 18) / 14) * 150;
+  if (clampedPct < 55) return 200 + ((clampedPct - 32) / 23) * (GALAXY_REVEAL_START - 200);
+  if (clampedPct < 78) return GALAXY_REVEAL_START + ((clampedPct - 55) / 23) * (UNIVERSE_REVEAL_START - GALAXY_REVEAL_START);
+  if (clampedPct < 100) return UNIVERSE_REVEAL_START + ((clampedPct - 78) / 22) * (UNIVERSE_REVEAL_FULL - UNIVERSE_REVEAL_START);
+  return UNIVERSE_REVEAL_FULL;
+}
+
+function setCameraDistance(distance, withTween) {
+  var target = controls.target.clone();
+  var camDir = camera.position.clone().sub(target);
+  if (camDir.lengthSq() < 1e-8) camDir.set(0, 0, 1);
+  camDir.normalize();
+  var clampedDistance = THREE.MathUtils.clamp(distance, controls.minDistance, controls.maxDistance);
+  var endPos = target.clone().add(camDir.multiplyScalar(clampedDistance));
+  if (selectedPlanet) selectedCameraOffset.copy(endPos).sub(target);
+  if (withTween) {
+    startCameraTween(endPos, target, 260);
+    return;
+  }
+  cameraTween = null;
+  controls.enabled = true;
+  camera.position.copy(endPos);
+}
+
+function scrubScaleFromClientX(clientX, withTween) {
+  if (!scaleTrack) return;
+  var rect = scaleTrack.getBoundingClientRect();
+  if (!rect.width) return;
+  var pct = ((clientX - rect.left) / rect.width) * 100;
+  var distance = scalePctToDistance(pct);
+  setCameraDistance(distance, withTween);
+}
+
+function updateUI(distanceToTarget) {
+  var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
+  var pct = distanceToScalePct(dist);
   if (Math.abs(pct - lastScalePct) > 0.12) {
     if (scaleFill) scaleFill.style.width = pct + "%";
     if (scaleThumb) scaleThumb.style.left = pct + "%";
@@ -1685,6 +1726,35 @@ function setupEvents() {
   canvas.addEventListener("pointerleave", function() { pointerInside = false; hoveredPlanet = null; tooltip.classList.add("hidden"); pointerNdc.set(9, 9); });
   canvas.addEventListener("dblclick", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
   if (btnReset) btnReset.addEventListener("click", function() { selectedPlanet = null; selectedAngleIndex = 0; startCameraTween(defaultCamPos, defaultTarget, 1200); });
+  if (scaleTrack) {
+    scaleTrack.addEventListener("pointerdown", function(e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      scaleScrubActive = true;
+      controlsDragging = false;
+      scrubScaleFromClientX(e.clientX, false);
+      if (scaleTrack.setPointerCapture) {
+        try { scaleTrack.setPointerCapture(e.pointerId); } catch (err) {}
+      }
+    });
+    scaleTrack.addEventListener("pointermove", function(e) {
+      if (!scaleScrubActive) return;
+      e.preventDefault();
+      scrubScaleFromClientX(e.clientX, false);
+    });
+    var endScaleScrub = function(e) {
+      if (!scaleScrubActive) return;
+      e.preventDefault();
+      scaleScrubActive = false;
+      if (scaleTrack.releasePointerCapture) {
+        try { scaleTrack.releasePointerCapture(e.pointerId); } catch (err) {}
+      }
+    };
+    scaleTrack.addEventListener("pointerup", endScaleScrub);
+    scaleTrack.addEventListener("pointercancel", endScaleScrub);
+    scaleTrack.addEventListener("lostpointercapture", function() { scaleScrubActive = false; });
+  }
   var onResize = function() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
