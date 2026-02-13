@@ -23,6 +23,25 @@ const isDesktopBrowser = !/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) 
   !!(window.matchMedia && window.matchMedia("(pointer: fine)").matches) &&
   window.innerWidth >= 960;
 const query = new URLSearchParams(window.location.search);
+const profileMode = (query.get("profile") || "optimized").toLowerCase();
+const useLegacyProfile = profileMode === "legacy";
+const useRoundImpostors = !useLegacyProfile;
+const useEfficientHoverPicking = !useLegacyProfile;
+const useUnifiedVisibility = !useLegacyProfile;
+const BENCHMARK_MODE = query.get("bench") === "1";
+const benchmarkDurationParam = Number(query.get("benchMs"));
+const benchmarkWarmupParam = Number(query.get("benchWarmupMs"));
+const BENCHMARK_DURATION_MS = Math.max(1000, Number.isFinite(benchmarkDurationParam) ? benchmarkDurationParam : 12000);
+const BENCHMARK_WARMUP_MS = Math.max(0, Number.isFinite(benchmarkWarmupParam) ? benchmarkWarmupParam : 2000);
+
+var benchmarkSeed = Number(query.get("seed"));
+if (Number.isFinite(benchmarkSeed) && benchmarkSeed > 0) {
+  var randState = (benchmarkSeed >>> 0) || 1;
+  Math.random = function() {
+    randState = ((randState * 1664525) + 1013904223) >>> 0;
+    return randState / 4294967296;
+  };
+}
 
 const QUALITY_PRESETS = {
   ultraLow: {
@@ -54,7 +73,9 @@ function inferQualityTier() {
   return "high";
 }
 
-var requestedQuality = (query.get("quality") || "").toLowerCase();
+const QUALITY_QUERY_ALIASES = { ultralow: "ultraLow", low: "low", medium: "medium", high: "high" };
+var requestedQualityRaw = (query.get("quality") || "").trim();
+var requestedQuality = QUALITY_QUERY_ALIASES[requestedQualityRaw.toLowerCase()] || requestedQualityRaw;
 const qualityTier = QUALITY_PRESETS[requestedQuality] ? requestedQuality : inferQualityTier();
 const quality = QUALITY_PRESETS[qualityTier];
 const Q = quality.q;
@@ -164,6 +185,8 @@ let lastInfoLabel = "__init__";
 let lastInfoVisible = false;
 let lastActivePlanetName = "__init__";
 let lastScaleDist = -1;
+let legacyMilkyWayVisible = true;
+let legacyUniverseVisible = false;
 let lastGalaxyVisibleState = null;
 let lastUniverseVisibleState = null;
 let lastAsteroidVisibleState = null;
@@ -186,6 +209,24 @@ const perfMetricRows = {};
 const perfMetricValues = {};
 const adaptiveResolutionEnabled = query.get("adaptiveRes") !== "off";
 const planetImpostorTextureCache = {};
+let benchmarkStartedAt = 0;
+let benchmarkDone = false;
+let benchmarkLastRafMs = 0;
+let benchmarkFrameMsSum = 0;
+let benchmarkFrameCount = 0;
+let benchmarkDrawCallsSum = 0;
+let benchmarkTrianglesSum = 0;
+let benchmarkPointsSum = 0;
+let benchmarkFrameTimes = [];
+let benchmarkAnimateTicks = 0;
+let benchmarkResultNode = null;
+
+if (BENCHMARK_MODE) {
+  benchmarkStartedAt = performance.now();
+  setTimeout(function() {
+    finalizeBenchmark(performance.now());
+  }, BENCHMARK_WARMUP_MS + BENCHMARK_DURATION_MS + 250);
+}
 
 const GALAXY_RADIUS = 18000;
 const SOLAR_GALACTIC_RADIUS = GALAXY_RADIUS * 0.62;
@@ -252,6 +293,19 @@ const defs = [
 
 /* ---- Procedural Textures ---- */
 function makeCanvas(w, h) { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; }
+
+function freezeStaticObject(obj) {
+  if (!obj || useLegacyProfile || !obj.updateMatrix) return obj;
+  obj.matrixAutoUpdate = false;
+  obj.updateMatrix();
+  return obj;
+}
+
+function disableFrustumCulling(obj) {
+  if (!obj || useLegacyProfile) return obj;
+  obj.frustumCulled = false;
+  return obj;
+}
 
 var _particleTex = null;
 function getParticleTexture() {
@@ -518,7 +572,10 @@ function setupBackgroundStars() {
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.8, depthWrite: false, map: getParticleTexture() })));
+  var richStars = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.8, depthWrite: false, map: getParticleTexture() }));
+  disableFrustumCulling(richStars);
+  freezeStaticObject(richStars);
+  scene.add(richStars);
 }
 
 function addStarLayer(count, minR, maxR, color, size, opacity) {
@@ -528,7 +585,10 @@ function addStarLayer(count, minR, maxR, color, size, opacity) {
     pos[i*3] = r*Math.sin(ph)*Math.cos(th); pos[i*3+1] = r*Math.cos(ph); pos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: color, size: size * 1.3, sizeAttenuation: true, transparent: true, opacity: opacity, depthWrite: false, map: getParticleTexture() })));
+  var starLayer = new THREE.Points(geo, new THREE.PointsMaterial({ color: color, size: size * 1.3, sizeAttenuation: true, transparent: true, opacity: opacity, depthWrite: false, map: getParticleTexture() }));
+  disableFrustumCulling(starLayer);
+  freezeStaticObject(starLayer);
+  scene.add(starLayer);
 }
 
 function setupSun() {
@@ -568,10 +628,10 @@ function setupPlanets() {
     // Planet LOD: preserve spherical visuals while reducing geometry cost at distance.
     var lod = new THREE.LOD();
     var mediumSegments = Math.max(16, (PLANET_SEGMENTS * 0.5) | 0);
-    var lowSegments = Math.max(10, (PLANET_SEGMENTS * 0.28) | 0);
-    var midDistance = def.radius * (qualityTier === "ultraLow" ? 18 : 24);
-    var lowDistance = def.radius * (qualityTier === "ultraLow" ? 54 : 72);
-    var impostorDistance = def.radius * (qualityTier === "ultraLow" ? 220 : 320);
+    var lowSegments = useLegacyProfile ? Math.max(12, (PLANET_SEGMENTS * 0.25) | 0) : Math.max(9, (PLANET_SEGMENTS * 0.22) | 0);
+    var midDistance = useLegacyProfile ? def.radius * 15 : def.radius * (qualityTier === "ultraLow" ? 12 : 14);
+    var lowDistance = useLegacyProfile ? def.radius * 50 : def.radius * (qualityTier === "ultraLow" ? 38 : 46);
+    var impostorDistance = useLegacyProfile ? def.radius * 150 : def.radius * (qualityTier === "ultraLow" ? 160 : 220);
     
     // High detail (close view)
     var highGeo = new THREE.SphereGeometry(def.radius, PLANET_SEGMENTS, PLANET_SEGMENTS);
@@ -591,19 +651,24 @@ function setupPlanets() {
     lowMesh.rotation.z = THREE.Math.degToRad(def.tilt);
     lod.addLevel(lowMesh, lowDistance);
     
-    // Very far: round impostor texture (no square billboard artifacts).
-    var spriteTex = getPlanetImpostorTexture(def.color);
-    var spriteMat = new THREE.SpriteMaterial({
-      map: spriteTex,
-      alphaMap: spriteTex,
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.96,
-      depthWrite: false,
-      alphaTest: 0.08,
-    });
+    // Very far impostor. Optimized profile uses round alpha-masked sprites.
+    var spriteMat;
+    if (useRoundImpostors) {
+      var spriteTex = getPlanetImpostorTexture(def.color);
+      spriteMat = new THREE.SpriteMaterial({
+        map: spriteTex,
+        alphaMap: spriteTex,
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.96,
+        depthWrite: false,
+        alphaTest: 0.08,
+      });
+    } else {
+      spriteMat = new THREE.SpriteMaterial({ color: def.color, transparent: true, opacity: 0.9 });
+    }
     var sprite = new THREE.Sprite(spriteMat);
-    sprite.scale.set(def.radius * 2.25, def.radius * 2.25, 1);
+    sprite.scale.set(useRoundImpostors ? def.radius * 2.25 : def.radius * 2.5, useRoundImpostors ? def.radius * 2.25 : def.radius * 2.5, 1);
     lod.addLevel(sprite, impostorDistance);
     
     anchor.add(lod);
@@ -708,9 +773,12 @@ function setupAsteroidBelt() {
   dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
   dustGeo.setAttribute("color", new THREE.BufferAttribute(dustCol, 3));
   var pTex = getParticleTexture();
-  beltGroup.add(new THREE.Points(dustGeo, new THREE.PointsMaterial({
+  var dustPoints = new THREE.Points(dustGeo, new THREE.PointsMaterial({
     size: 0.12, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false, map: pTex
-  })));
+  }));
+  disableFrustumCulling(dustPoints);
+  freezeStaticObject(dustPoints);
+  beltGroup.add(dustPoints);
 
   // Layer 2: Medium rocks
   var medCount = 4000 * Q | 0;
@@ -726,9 +794,12 @@ function setupAsteroidBelt() {
   }
   medGeo.setAttribute("position", new THREE.BufferAttribute(medPos, 3));
   medGeo.setAttribute("color", new THREE.BufferAttribute(medCol, 3));
-  beltGroup.add(new THREE.Points(medGeo, new THREE.PointsMaterial({
+  var mediumPoints = new THREE.Points(medGeo, new THREE.PointsMaterial({
     size: 0.3, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false, map: pTex
-  })));
+  }));
+  disableFrustumCulling(mediumPoints);
+  freezeStaticObject(mediumPoints);
+  beltGroup.add(mediumPoints);
 
   // Layer 3: Larger rocks (sparse, bigger)
   var lgCount = 1200 * Q | 0;
@@ -742,9 +813,12 @@ function setupAsteroidBelt() {
   }
   lgGeo.setAttribute("position", new THREE.BufferAttribute(lgPos, 3));
   lgGeo.setAttribute("color", new THREE.BufferAttribute(lgCol, 3));
-  beltGroup.add(new THREE.Points(lgGeo, new THREE.PointsMaterial({
+  var largePoints = new THREE.Points(lgGeo, new THREE.PointsMaterial({
     size: 0.6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.65, depthWrite: false, map: pTex
-  })));
+  }));
+  disableFrustumCulling(largePoints);
+  freezeStaticObject(largePoints);
+  beltGroup.add(largePoints);
 
   // Layer 4: Subtle dust glow band (additive, gives the belt a soft haze)
   var glowCount = 3000 * Q | 0;
@@ -755,9 +829,12 @@ function setupAsteroidBelt() {
     glowPos[i*3] = Math.cos(a) * r; glowPos[i*3+1] = THREE.Math.randFloatSpread(1.0); glowPos[i*3+2] = Math.sin(a) * r;
   }
   glowGeo.setAttribute("position", new THREE.BufferAttribute(glowPos, 3));
-  beltGroup.add(new THREE.Points(glowGeo, new THREE.PointsMaterial({
+  var glowPoints = new THREE.Points(glowGeo, new THREE.PointsMaterial({
     color: 0xc4a882, size: 1.8, sizeAttenuation: true, transparent: true, opacity: 0.06, depthWrite: false, blending: THREE.AdditiveBlending, map: pTex
-  })));
+  }));
+  disableFrustumCulling(glowPoints);
+  freezeStaticObject(glowPoints);
+  beltGroup.add(glowPoints);
 
   // Named asteroids as small meshes: Ceres, Vesta, Pallas, Hygiea
   var namedAsteroids = [
@@ -806,6 +883,8 @@ function setupKuiperBelt() {
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   kuiperBeltMesh = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x889aaa, size: 0.25, sizeAttenuation: true, transparent: true, opacity: 0.4, depthWrite: false, map: getParticleTexture() }));
+  disableFrustumCulling(kuiperBeltMesh);
+  freezeStaticObject(kuiperBeltMesh);
   root.add(kuiperBeltMesh);
 
   // Pluto
@@ -849,6 +928,8 @@ function setupMilkyWay() {
   armGeo.setAttribute("position", new THREE.BufferAttribute(armPos, 3));
   armGeo.setAttribute("color", new THREE.BufferAttribute(armCol, 3));
   milkyWayBand = new THREE.Points(armGeo, new THREE.PointsMaterial({ size: 6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
+  disableFrustumCulling(milkyWayBand);
+  freezeStaticObject(milkyWayBand);
   galaxyGroup.add(milkyWayBand);
 
   // Galactic center bar
@@ -866,15 +947,22 @@ function setupMilkyWay() {
   barGeo.setAttribute("color", new THREE.BufferAttribute(barCol, 3));
   var galacticBar = new THREE.Points(barGeo, new THREE.PointsMaterial({ size: 7, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   galacticBar.rotation.y = THREE.Math.degToRad(30);
+  disableFrustumCulling(galacticBar);
+  freezeStaticObject(galacticBar);
   galaxyGroup.add(galacticBar);
 
   galacticCenterGlow = new THREE.Mesh(new THREE.SphereGeometry(850, 52, 52),
     new THREE.MeshBasicMaterial({ color: 0xd2e1ff, transparent: true, opacity: 0.04, side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+  disableFrustumCulling(galacticCenterGlow);
+  freezeStaticObject(galacticCenterGlow);
   galaxyGroup.add(galacticCenterGlow);
 
   // Sagittarius A*
-  galaxyGroup.add(new THREE.Mesh(new THREE.SphereGeometry(60, 24, 24),
-    new THREE.MeshBasicMaterial({ color: 0xffeecc, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending, depthWrite: false })));
+  var sgrA = new THREE.Mesh(new THREE.SphereGeometry(60, 24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xffeecc, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending, depthWrite: false }));
+  disableFrustumCulling(sgrA);
+  freezeStaticObject(sgrA);
+  galaxyGroup.add(sgrA);
 
   // Nebulae
   var nebData = [
@@ -890,10 +978,14 @@ function setupMilkyWay() {
     var nebMesh = new THREE.Mesh(new THREE.SphereGeometry(nd.r, 24, 24),
       new THREE.MeshBasicMaterial({ color: nd.color, transparent: true, opacity: 0.03, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
     nebMesh.position.set(nd.pos[0], nd.pos[1], nd.pos[2]);
+    disableFrustumCulling(nebMesh);
+    freezeStaticObject(nebMesh);
     galaxyGroup.add(nebMesh); nebulaeMeshes.push(nebMesh);
     var label = makeTextSprite(nd.name);
     label.position.set(nd.pos[0], nd.pos[1] + nd.r + 120, nd.pos[2]);
     label.scale.set(1200, 190, 1); label.material.opacity = 0;
+    disableFrustumCulling(label);
+    freezeStaticObject(label);
     galaxyGroup.add(label); nebulaeMeshes.push(label);
   }
 
@@ -908,12 +1000,17 @@ function setupMilkyWay() {
 
   solarSystemLabel = makeTextSprite("Solar System (Orion Arm)");
   solarSystemLabel.position.copy(solarPosition.clone().add(new THREE.Vector3(0, 340, 0)));
-  solarSystemLabel.material.opacity = 0; galaxyGroup.add(solarSystemLabel);
+  solarSystemLabel.material.opacity = 0;
+  disableFrustumCulling(solarSystemLabel);
+  freezeStaticObject(solarSystemLabel);
+  galaxyGroup.add(solarSystemLabel);
 
   // Tether line
-  galaxyGroup.add(new THREE.Line(
+  var tetherLine = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), solarPosition]),
-    new THREE.LineBasicMaterial({ color: 0x6c89b8, transparent: true, opacity: 0.04 })));
+    new THREE.LineBasicMaterial({ color: 0x6c89b8, transparent: true, opacity: 0.04 }));
+  freezeStaticObject(tetherLine);
+  galaxyGroup.add(tetherLine);
 
   // Spiral arm labels
   var armLabels = [
@@ -927,8 +1024,11 @@ function setupMilkyWay() {
     var alabel = makeTextSprite(al.text);
     alabel.position.set(al.pos[0], al.pos[1], al.pos[2]);
     alabel.scale.set(2400, 380, 1); alabel.material.opacity = 0;
+    disableFrustumCulling(alabel);
+    freezeStaticObject(alabel);
     galaxyGroup.add(alabel); nebulaeMeshes.push(alabel);
   }
+  freezeStaticObject(galaxyGroup);
 }
 
 function setupUniverse() {
@@ -956,6 +1056,8 @@ function setupUniverse() {
   fieldGeo.setAttribute("position", new THREE.BufferAttribute(fieldPos, 3));
   fieldGeo.setAttribute("color", new THREE.BufferAttribute(fieldCol, 3));
   universeField = new THREE.Points(fieldGeo, new THREE.PointsMaterial({ size: 820, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
+  disableFrustumCulling(universeField);
+  freezeStaticObject(universeField);
   universeGroup.add(universeField);
 
   // Cosmic web filaments
@@ -978,6 +1080,8 @@ function setupUniverse() {
   }
   webGeo.setAttribute("position", new THREE.BufferAttribute(webPos, 3));
   universeClusters = new THREE.Points(webGeo, new THREE.PointsMaterial({ color: 0xd8d0ff, size: 3000, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
+  disableFrustumCulling(universeClusters);
+  freezeStaticObject(universeClusters);
   universeGroup.add(universeClusters);
 
   // Named galaxies
@@ -1023,15 +1127,22 @@ function setupUniverse() {
     gGeo.setAttribute("position", new THREE.BufferAttribute(gPos, 3));
     gGeo.setAttribute("color", new THREE.BufferAttribute(gCol, 3));
     var pts = new THREE.Points(gGeo, new THREE.PointsMaterial({ size: gd.size * 0.016, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
+    disableFrustumCulling(pts);
+    freezeStaticObject(pts);
     group.add(pts);
     var gGlow = new THREE.Mesh(new THREE.SphereGeometry(gd.size * 0.12, 16, 16),
       new THREE.MeshBasicMaterial({ color: gd.color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    disableFrustumCulling(gGlow);
+    freezeStaticObject(gGlow);
     group.add(gGlow);
     var gLabel = makeTextSprite(gd.name);
     gLabel.position.set(0, gd.size * 0.4, 0);
     gLabel.scale.set(gd.size * 1.5, gd.size * 0.22, 1);
     gLabel.material.opacity = 0;
+    disableFrustumCulling(gLabel);
+    freezeStaticObject(gLabel);
     group.add(gLabel);
+    freezeStaticObject(group);
     universeGroup.add(group);
     namedGalaxies.push({ group: group, points: pts, glow: gGlow, label: gLabel });
   }
@@ -1043,12 +1154,17 @@ function setupUniverse() {
   milkyWayUniverseLabel.position.set(0, 26000, 0);
   milkyWayUniverseLabel.scale.set(62000, 9200, 1);
   milkyWayUniverseLabel.material.opacity = 0;
+  disableFrustumCulling(milkyWayUniverseLabel);
+  freezeStaticObject(milkyWayUniverseLabel);
   universeGroup.add(milkyWayUniverseLabel);
   universeLabel = makeTextSprite("Observable Universe");
   universeLabel.position.set(0, 260000, -90000);
   universeLabel.scale.set(320000, 46000, 1);
   universeLabel.material.opacity = 0;
+  disableFrustumCulling(universeLabel);
+  freezeStaticObject(universeLabel);
   universeGroup.add(universeLabel);
+  freezeStaticObject(universeGroup);
 }
 
 function loadEarthAssets() {
@@ -1095,6 +1211,7 @@ function createOrbit(radius, material) {
   for (var i = 0; i <= segments; i++) { var a = (i / segments) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius)); }
   var line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), material);
   line.userData.baseOpacity = material.opacity !== undefined ? material.opacity : 1;
+  freezeStaticObject(line);
   return line;
 }
 
@@ -1307,7 +1424,7 @@ function setAllPerformanceMetricVisibility(visible) {
 
 function setupPerformanceUI() {
   if (!perfShell || !perfPanel || !perfGrid || !perfMenu || !perfMenuList) return;
-  if (!isDesktopBrowser) {
+  if (BENCHMARK_MODE || !isDesktopBrowser) {
     perfShell.classList.add("hidden");
     return;
   }
@@ -1388,6 +1505,61 @@ function formatDistance(value) {
   return value.toFixed(1);
 }
 
+function getBenchmarkResultNode() {
+  if (benchmarkResultNode) return benchmarkResultNode;
+  benchmarkResultNode = document.getElementById("benchResult");
+  if (!benchmarkResultNode) {
+    benchmarkResultNode = document.createElement("pre");
+    benchmarkResultNode.id = "benchResult";
+    benchmarkResultNode.setAttribute("aria-hidden", "true");
+    benchmarkResultNode.style.position = "fixed";
+    benchmarkResultNode.style.left = "-99999px";
+    benchmarkResultNode.style.top = "0";
+    benchmarkResultNode.style.width = "1px";
+    benchmarkResultNode.style.height = "1px";
+    benchmarkResultNode.style.overflow = "hidden";
+    document.body.appendChild(benchmarkResultNode);
+  }
+  return benchmarkResultNode;
+}
+
+function percentileFromSorted(sortedValues, pct) {
+  if (!sortedValues.length) return 0;
+  var idx = Math.min(sortedValues.length - 1, Math.max(0, Math.ceil((pct / 100) * sortedValues.length) - 1));
+  return sortedValues[idx];
+}
+
+function finalizeBenchmark(now) {
+  if (benchmarkDone) return;
+  benchmarkDone = true;
+  var elapsed = Math.max(0, now - benchmarkStartedAt - BENCHMARK_WARMUP_MS);
+  var avgFrameMs = benchmarkFrameCount > 0 ? benchmarkFrameMsSum / benchmarkFrameCount : 0;
+  var avgFps = avgFrameMs > 0 ? 1000 / avgFrameMs : 0;
+  var drawCallsAvg = benchmarkFrameCount > 0 ? benchmarkDrawCallsSum / benchmarkFrameCount : 0;
+  var trianglesAvg = benchmarkFrameCount > 0 ? benchmarkTrianglesSum / benchmarkFrameCount : 0;
+  var pointsAvg = benchmarkFrameCount > 0 ? benchmarkPointsSum / benchmarkFrameCount : 0;
+  var sortedFrameTimes = benchmarkFrameTimes.slice().sort(function(a, b) { return a - b; });
+  var result = {
+    profile: useLegacyProfile ? "legacy" : "optimized",
+    quality: qualityTier,
+    durationMs: Math.round(elapsed),
+    warmupMs: BENCHMARK_WARMUP_MS,
+    animateTicks: benchmarkAnimateTicks,
+    sampledFrames: benchmarkFrameCount,
+    fpsAvg: Number(avgFps.toFixed(2)),
+    frameMsAvg: Number(avgFrameMs.toFixed(3)),
+    frameMsP95: Number(percentileFromSorted(sortedFrameTimes, 95).toFixed(3)),
+    drawCallsAvg: Number(drawCallsAvg.toFixed(2)),
+    trianglesAvg: Math.round(trianglesAvg),
+    pointsAvg: Math.round(pointsAvg),
+    pixelRatio: Number(currentPixelRatio.toFixed(2)),
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+  };
+  window.__izziBenchResult = result;
+  getBenchmarkResultNode().textContent = JSON.stringify(result);
+  document.documentElement.setAttribute("data-bench-ready", "1");
+}
+
 function updatePerformanceMetricValue(metricKey, value) {
   var node = perfMetricValues[metricKey];
   if (!node) return;
@@ -1401,7 +1573,7 @@ function samplePerformanceTelemetry(dtMs) {
   perfLastFrameMs = dtMs;
 }
 
-function updatePerformanceTelemetry(now, force) {
+function updatePerformanceTelemetry(now, force, distanceToTarget) {
   if (!performanceUIEnabled) return;
   if (!force && ((now - perfLastUpdateAt) < PERFORMANCE_REFRESH_MS || perfFrameCount < 10)) return;
 
@@ -1410,7 +1582,7 @@ function updatePerformanceTelemetry(now, force) {
   var memoryInfo = renderer.info.memory;
   var renderWidth = Math.round(window.innerWidth * currentPixelRatio);
   var renderHeight = Math.round(window.innerHeight * currentPixelRatio);
-  var distanceToTarget = camera.position.distanceTo(controls.target);
+  var distance = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
   var qualityLabel = qualityTier.toUpperCase() + (adaptiveResolutionEnabled ? " / ADAPT" : " / FIXED");
 
   updatePerformanceMetricValue("fps", fps.toFixed(1));
@@ -1422,15 +1594,15 @@ function updatePerformanceTelemetry(now, force) {
   updatePerformanceMetricValue("resolution", renderWidth + " x " + renderHeight);
   updatePerformanceMetricValue("memory", formatMetricCount(memoryInfo.geometries) + "g / " + formatMetricCount(memoryInfo.textures) + "t");
   updatePerformanceMetricValue("quality", qualityLabel);
-  updatePerformanceMetricValue("distance", formatDistance(distanceToTarget));
+  updatePerformanceMetricValue("distance", formatDistance(distance));
 
   perfFrameElapsedMs = 0;
   perfFrameCount = 0;
   perfLastUpdateAt = now;
 }
 
-function updateUI() {
-  var dist = camera.position.distanceTo(controls.target);
+function updateUI(distanceToTarget) {
+  var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
   // Scale bar position: map camera distance to 0-100%
   // Sun ~2-50, Asteroids ~50-200, Kuiper ~200-900, Milky Way ~900-18000, Local Group ~18000-2600000, Universe ~2600000+
   var pct = 0;
@@ -1556,11 +1728,11 @@ function updateCameraTween(now) {
   if (t >= 1) { controls.enabled = true; cameraTween = null; }
 }
 
-function updateHover() {
+function updateHover(distanceToTarget) {
   if (!pointerInside) return;
   
   // Skip raycasting when zoomed far out.
-  var dist = camera.position.distanceTo(controls.target);
+  var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
   if (dist > 500) {
     hoveredPlanet = null;
     tooltip.classList.add("hidden");
@@ -1570,7 +1742,22 @@ function updateHover() {
   
   raycaster.setFromCamera(pointerNdc, camera);
   raycaster.far = Math.min(dist + 200, 500);
-  var hits = raycaster.intersectObjects(pickables, false);
+  var hits;
+  if (useEfficientHoverPicking) {
+    hits = raycaster.intersectObjects(pickables, false);
+  } else {
+    // Legacy profile: rebuild filtered pickable set each update.
+    var nearbyPickables = [];
+    var camPos = camera.position;
+    for (var i = 0; i < pickables.length; i++) {
+      var obj = pickables[i];
+      if (obj.position) {
+        var objDist = camPos.distanceTo(obj.position);
+        if (objDist < raycaster.far * 1.5) nearbyPickables.push(obj);
+      } else nearbyPickables.push(obj);
+    }
+    hits = raycaster.intersectObjects(nearbyPickables, false);
+  }
   hoveredPlanet = hits.length > 0 ? hits[0].object.userData.planet : null;
   canvas.style.cursor = hoveredPlanet ? "pointer" : controlsDragging ? "grabbing" : "grab";
   if (hoveredPlanet) {
@@ -1580,8 +1767,8 @@ function updateHover() {
   } else { tooltip.classList.add("hidden"); }
 }
 
-function updateScaleContext() {
-  var dist = camera.position.distanceTo(controls.target);
+function updateScaleContext(distanceToTarget) {
+  var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
   if (lastScaleDist >= 0 && Math.abs(dist - lastScaleDist) < 0.02) return;
   lastScaleDist = dist;
   var gA = THREE.MathUtils.clamp((dist - GALAXY_REVEAL_START) / (GALAXY_REVEAL_FULL - GALAXY_REVEAL_START), 0, 1);
@@ -1618,15 +1805,17 @@ function updateScaleContext() {
   }
   if (kuiperBeltMesh) kuiperBeltMesh.material.opacity = 0.4 * (1 - gA * 0.9);
 
-  var asteroidVisible = dist < 500 && dist > 5;
-  if (asteroidBeltMesh && asteroidVisible !== lastAsteroidVisibleState) {
-    asteroidBeltMesh.visible = asteroidVisible;
-    lastAsteroidVisibleState = asteroidVisible;
-  }
-  var kuiperVisible = dist < 1000 && dist > 20;
-  if (kuiperBeltMesh && kuiperVisible !== lastKuiperVisibleState) {
-    kuiperBeltMesh.visible = kuiperVisible;
-    lastKuiperVisibleState = kuiperVisible;
+  if (useUnifiedVisibility) {
+    var asteroidVisible = dist < 500 && dist > 5;
+    if (asteroidBeltMesh && asteroidVisible !== lastAsteroidVisibleState) {
+      asteroidBeltMesh.visible = asteroidVisible;
+      lastAsteroidVisibleState = asteroidVisible;
+    }
+    var kuiperVisible = dist < 1000 && dist > 20;
+    if (kuiperBeltMesh && kuiperVisible !== lastKuiperVisibleState) {
+      kuiperBeltMesh.visible = kuiperVisible;
+      lastKuiperVisibleState = kuiperVisible;
+    }
   }
 
   if (universeVisible) {
@@ -1645,6 +1834,35 @@ function updateScaleContext() {
   for (var i = 0; i < orbitLines.length; i++) {
     var base = orbitLines[i].userData.baseOpacity || 0.4;
     orbitLines[i].material.opacity = base * (1 - gA * 0.82) * (1 - uA * 0.8);
+  }
+}
+
+function updateParticleVisibilityLegacy(distanceToTarget) {
+  var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
+
+  var shouldShowMilkyWay = dist > GALAXY_REVEAL_START * 0.3;
+  if (legacyMilkyWayVisible !== shouldShowMilkyWay) {
+    legacyMilkyWayVisible = shouldShowMilkyWay;
+    if (milkyWayBand) milkyWayBand.visible = shouldShowMilkyWay;
+    if (galacticCenterGlow) galacticCenterGlow.visible = shouldShowMilkyWay;
+    if (galaxyGroup) galaxyGroup.visible = shouldShowMilkyWay;
+  }
+
+  var shouldShowUniverse = dist > UNIVERSE_REVEAL_START * 0.3;
+  if (legacyUniverseVisible !== shouldShowUniverse) {
+    legacyUniverseVisible = shouldShowUniverse;
+    if (universeField) universeField.visible = shouldShowUniverse;
+    if (universeClusters) universeClusters.visible = shouldShowUniverse;
+    if (universeGroup) universeGroup.visible = shouldShowUniverse;
+  }
+
+  if (asteroidBeltMesh) {
+    var beltVisible = dist < 500 && dist > 5;
+    if (asteroidBeltMesh.visible !== beltVisible) asteroidBeltMesh.visible = beltVisible;
+  }
+  if (kuiperBeltMesh) {
+    var kuiperVisible = dist < 1000 && dist > 20;
+    if (kuiperBeltMesh.visible !== kuiperVisible) kuiperBeltMesh.visible = kuiperVisible;
   }
 }
 
@@ -1685,11 +1903,14 @@ function maybeAdjustResolution(dtMs) {
 
 function animate(now) {
   requestAnimationFrame(animate);
+  if (BENCHMARK_MODE) benchmarkAnimateTicks += 1;
   var rafNow = now || performance.now();
+  if (BENCHMARK_MODE && benchmarkLastRafMs === 0) benchmarkLastRafMs = rafNow;
   var dt = Math.min(clock.getDelta(), 0.05);
   var dtMs = dt * 1000;
   var nowMs = Date.now();
   samplePerformanceTelemetry(dtMs);
+  var cameraDistance = camera.position.distanceTo(controls.target);
   var simDays = 0;
   if (positionMode === POSITION_MODE_SIM) {
     // Smooth interpolation toward target speed — prevents jerky jumps
@@ -1700,8 +1921,8 @@ function animate(now) {
     lastLiveUpdateMs = nowMs;
   }
   hoverElapsedMs += dtMs;
-  if (hoverElapsedMs >= HOVER_UPDATE_INTERVAL_MS || controlsDragging) {
-    updateHover();
+  if (hoverElapsedMs >= HOVER_UPDATE_INTERVAL_MS) {
+    updateHover(cameraDistance);
     hoverElapsedMs = 0;
   }
   updateCameraTween(now || 0);
@@ -1754,17 +1975,34 @@ function animate(now) {
     else selectedCameraOffset.copy(camera.position).sub(controls.target);
   }
 
-  updateScaleContext();
+  cameraDistance = camera.position.distanceTo(controls.target);
+  updateScaleContext(cameraDistance);
+  if (!useUnifiedVisibility) updateParticleVisibilityLegacy(cameraDistance);
   uiElapsedMs += dtMs;
   if (uiElapsedMs >= UI_UPDATE_INTERVAL_MS) {
-    updateUI();
+    updateUI(cameraDistance);
     uiElapsedMs = 0;
   }
   controls.autoRotate = !selectedPlanet && !cameraTween && !controlsDragging;
   controls.update();
   maybeAdjustResolution(dtMs);
   renderer.render(scene, camera);
-  updatePerformanceTelemetry(rafNow, false);
+  if (BENCHMARK_MODE && !benchmarkDone) {
+    var benchElapsed = rafNow - benchmarkStartedAt;
+    var frameMs = Math.max(0, rafNow - benchmarkLastRafMs);
+    benchmarkLastRafMs = rafNow;
+    if (benchElapsed >= BENCHMARK_WARMUP_MS) {
+      var renderInfo = renderer.info.render;
+      benchmarkFrameMsSum += frameMs;
+      benchmarkFrameCount += 1;
+      benchmarkDrawCallsSum += renderInfo.calls;
+      benchmarkTrianglesSum += renderInfo.triangles;
+      benchmarkPointsSum += renderInfo.points;
+      if (benchmarkFrameTimes.length < 4000) benchmarkFrameTimes.push(frameMs);
+    }
+    if (benchElapsed >= (BENCHMARK_WARMUP_MS + BENCHMARK_DURATION_MS)) finalizeBenchmark(rafNow);
+  }
+  updatePerformanceTelemetry(rafNow, false, cameraDistance);
 }
 
 setPositionMode(positionMode);
