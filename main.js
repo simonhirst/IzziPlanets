@@ -10,6 +10,8 @@ const infoBar = document.getElementById("infoBar");
 const infoLabel = document.getElementById("infoLabel");
 const btnReset = document.getElementById("btnReset");
 const planetNav = document.getElementById("planetNav");
+const uiBrand = document.getElementById("uiBrand");
+const uiControlsPanel = document.getElementById("uiControlsPanel");
 const perfShell = document.getElementById("perfShell");
 const perfPanel = document.getElementById("perfPanel");
 const perfGrid = document.getElementById("perfGrid");
@@ -20,6 +22,12 @@ const perfHideBtn = document.getElementById("perfHideBtn");
 const perfShowBtn = document.getElementById("perfShowBtn");
 const perfShowAllBtn = document.getElementById("perfShowAll");
 const perfHideAllBtn = document.getElementById("perfHideAll");
+const uiShell = document.getElementById("uiShell");
+const uiMenu = document.getElementById("uiMenu");
+const uiMenuBtn = document.getElementById("uiMenuBtn");
+const uiMenuList = document.getElementById("uiMenuList");
+const uiShowAllBtn = document.getElementById("uiShowAll");
+const uiHideAllBtn = document.getElementById("uiHideAll");
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
 const isDesktopBrowser = !/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) &&
   !!(window.matchMedia && window.matchMedia("(pointer: fine)").matches) &&
@@ -139,8 +147,10 @@ let controlsDragging = false, cameraTween = null, pointerDownPos = null;
 const POSITION_MODE_SIM = "sim";
 const POSITION_MODE_LIVE = "live";
 const PERFORMANCE_REFRESH_MS = 360;
-const PERFORMANCE_PANEL_STORAGE_KEY = "izzi.performance.panel.visible.v1";
-const PERFORMANCE_METRIC_STORAGE_KEY = "izzi.performance.metrics.visible.v1";
+const performanceStorageSuffix = isMobile ? "mobile" : "desktop";
+const PERFORMANCE_PANEL_STORAGE_KEY = "izzi.performance.panel.visible." + performanceStorageSuffix + ".v1";
+const PERFORMANCE_METRIC_STORAGE_KEY = "izzi.performance.metrics.visible." + performanceStorageSuffix + ".v1";
+const UI_COMPONENT_STORAGE_KEY = "izzi.ui.components.visible." + performanceStorageSuffix + ".v1";
 const PERFORMANCE_METRICS = [
   { key: "fps", label: "FPS" },
   { key: "frame", label: "Frame Time" },
@@ -152,6 +162,14 @@ const PERFORMANCE_METRICS = [
   { key: "memory", label: "GPU Memory" },
   { key: "quality", label: "Quality Mode" },
   { key: "distance", label: "Camera Dist" },
+];
+const UI_COMPONENTS = [
+  { key: "brand", label: "Brand", element: uiBrand, defaultVisible: true },
+  { key: "navigation", label: "Planet Navigation", element: planetNav, defaultVisible: true },
+  { key: "scale", label: "Zoom Scale", element: scaleBar, defaultVisible: true },
+  { key: "context", label: "Context Label", element: infoBar, defaultVisible: true },
+  { key: "controls", label: "Control Panel", element: uiControlsPanel, defaultVisible: true },
+  { key: "performance", label: "Performance Panel", element: perfShell, defaultVisible: true },
 ];
 
 function sliderToTimeWarp(v) {
@@ -208,8 +226,11 @@ let perfPanelVisible = true;
 let perfMenuOpen = false;
 let performanceUIEnabled = false;
 let perfMetricsVisible = {};
+let uiMenuOpen = false;
+let uiComponentsVisible = {};
 const perfMetricRows = {};
 const perfMetricValues = {};
+const uiComponentInputs = {};
 const adaptiveResolutionEnabled = query.get("adaptiveRes") !== "off";
 const planetImpostorTextureCache = {};
 let benchmarkStartedAt = 0;
@@ -551,6 +572,7 @@ setupAsteroidBelt();
 setupKuiperBelt();
 setupUI();
 setupPerformanceUI();
+setupGlobalUI();
 setupEvents();
 updateUI();
 loadEarthAssets();
@@ -1351,6 +1373,107 @@ function setupUI() {
   planetNavItems = planetNav ? Array.prototype.slice.call(planetNav.querySelectorAll(".planet-item")) : [];
 }
 
+function getDefaultUIComponentVisibility() {
+  var visibility = {};
+  for (var i = 0; i < UI_COMPONENTS.length; i++) {
+    var item = UI_COMPONENTS[i];
+    visibility[item.key] = item.defaultVisible !== false;
+  }
+  return visibility;
+}
+
+function loadUIComponentVisibility() {
+  var defaults = getDefaultUIComponentVisibility();
+  try {
+    var raw = localStorage.getItem(UI_COMPONENT_STORAGE_KEY);
+    if (!raw) return defaults;
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return defaults;
+    for (var i = 0; i < UI_COMPONENTS.length; i++) {
+      var key = UI_COMPONENTS[i].key;
+      defaults[key] = parsed[key] !== undefined ? !!parsed[key] : defaults[key];
+    }
+    return defaults;
+  } catch (err) {
+    return defaults;
+  }
+}
+
+function saveUIComponentVisibility() {
+  try { localStorage.setItem(UI_COMPONENT_STORAGE_KEY, JSON.stringify(uiComponentsVisible)); } catch (err) {}
+}
+
+function setUIMenuOpen(open) {
+  if (!uiMenu || !uiMenuBtn) return;
+  uiMenuOpen = !!open;
+  uiMenu.classList.toggle("hidden", !uiMenuOpen);
+  uiMenuBtn.setAttribute("aria-expanded", uiMenuOpen ? "true" : "false");
+}
+
+function setUIComponentVisibility(key, visible, skipPersist) {
+  if (key === "performance" && BENCHMARK_MODE) visible = false;
+  uiComponentsVisible[key] = !!visible;
+  for (var i = 0; i < UI_COMPONENTS.length; i++) {
+    var item = UI_COMPONENTS[i];
+    if (item.key !== key || !item.element) continue;
+    item.element.classList.toggle("hidden", !uiComponentsVisible[key]);
+    if (key === "context" && !uiComponentsVisible[key]) item.element.classList.remove("visible");
+    if (key === "performance" && !uiComponentsVisible[key]) setPerformanceMenuOpen(false);
+    break;
+  }
+  if (uiComponentInputs[key]) uiComponentInputs[key].checked = !!uiComponentsVisible[key];
+  if (!skipPersist) saveUIComponentVisibility();
+}
+
+function setAllUIComponentVisibility(visible) {
+  for (var i = 0; i < UI_COMPONENTS.length; i++) setUIComponentVisibility(UI_COMPONENTS[i].key, visible, true);
+  saveUIComponentVisibility();
+}
+
+function setupGlobalUI() {
+  if (!uiShell || !uiMenu || !uiMenuBtn || !uiMenuList) return;
+  uiComponentsVisible = loadUIComponentVisibility();
+  uiMenuList.innerHTML = "";
+
+  for (var i = 0; i < UI_COMPONENTS.length; i++) {
+    var item = UI_COMPONENTS[i];
+    if (!item.element) continue;
+    var row = document.createElement("label");
+    row.className = "ui-menu-item";
+
+    var input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.component = item.key;
+    input.checked = !!uiComponentsVisible[item.key];
+    input.addEventListener("change", function(e) {
+      setUIComponentVisibility(e.target.dataset.component, e.target.checked);
+    });
+
+    var text = document.createElement("span");
+    text.className = "ui-menu-label";
+    text.textContent = item.label;
+
+    row.appendChild(input);
+    row.appendChild(text);
+    uiMenuList.appendChild(row);
+    uiComponentInputs[item.key] = input;
+    setUIComponentVisibility(item.key, uiComponentsVisible[item.key], true);
+  }
+
+  uiMenuBtn.addEventListener("click", function() { setUIMenuOpen(!uiMenuOpen); });
+  if (uiShowAllBtn) uiShowAllBtn.addEventListener("click", function() { setAllUIComponentVisibility(true); });
+  if (uiHideAllBtn) uiHideAllBtn.addEventListener("click", function() { setAllUIComponentVisibility(false); });
+
+  document.addEventListener("pointerdown", function(e) {
+    if (!uiMenuOpen) return;
+    if (!uiShell.contains(e.target)) setUIMenuOpen(false);
+  });
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape") setUIMenuOpen(false);
+  });
+  setUIMenuOpen(false);
+}
+
 function getDefaultPerformanceMetricVisibility() {
   var visibility = {};
   for (var i = 0; i < PERFORMANCE_METRICS.length; i++) visibility[PERFORMANCE_METRICS[i].key] = true;
@@ -1474,8 +1597,8 @@ function setupPerformanceUI() {
   }
 
   if (perfMenuBtn) perfMenuBtn.addEventListener("click", function() { setPerformanceMenuOpen(!perfMenuOpen); });
-  if (perfHideBtn) perfHideBtn.addEventListener("click", function() { setPerformancePanelVisibility(false); });
-  if (perfShowBtn) perfShowBtn.addEventListener("click", function() { setPerformancePanelVisibility(true); });
+  if (perfHideBtn) perfHideBtn.addEventListener("click", function() { setUIComponentVisibility("performance", false); });
+  if (perfShowBtn) perfShowBtn.addEventListener("click", function() { setUIComponentVisibility("performance", true); });
   if (perfShowAllBtn) perfShowAllBtn.addEventListener("click", function() { setAllPerformanceMetricVisibility(true); });
   if (perfHideAllBtn) perfHideAllBtn.addEventListener("click", function() { setAllPerformanceMetricVisibility(false); });
 
@@ -1681,7 +1804,8 @@ function updateUI(distanceToTarget) {
     if (infoLabel) infoLabel.textContent = label;
     lastInfoLabel = label;
   }
-  var visible = !!label;
+  var contextEnabled = uiComponentsVisible.context !== false;
+  var visible = contextEnabled && !!label;
   if (visible !== lastInfoVisible) {
     if (infoBar) {
       if (visible) infoBar.classList.add("visible");

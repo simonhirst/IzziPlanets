@@ -17,13 +17,13 @@
     <canvas id="scene"></canvas>
 
     <!-- Top-left title -->
-    <div class="brand">
+    <div class="brand" id="uiBrand">
       <div class="brand-title">
         <span class="brand-izzi">Izzi's</span>
         <span class="brand-universe">Universe</span>
       </div>
       <div class="brand-line"></div>
-      <div class="brand-version">v0.15</div>
+      <div class="brand-version">v0.16</div>
     </div>
 
     <!-- Desktop performance telemetry -->
@@ -49,11 +49,11 @@
         </div>
         <div class="perf-menu-list" id="perfMenuList"></div>
       </aside>
-      <button id="perfShowBtn" type="button" class="perf-show-btn hidden">Show Performance</button>
+      <button id="perfShowBtn" type="button" class="perf-show-btn hidden">Performance Settings</button>
     </div>
 
     <!-- Scale indicator - bottom center -->
-    <div class="scale-bar">
+    <div class="scale-bar" id="uiScaleBar">
       <div class="scale-track">
         <div class="scale-pip" data-label="Sun" style="left: 0%"></div>
         <div class="scale-pip" data-label="Asteroids" style="left: 18%"></div>
@@ -72,7 +72,7 @@
     </div>
 
     <!-- Controls panel - bottom right -->
-    <div class="controls-panel">
+    <div class="controls-panel" id="uiControlsPanel">
       <div class="control-group">
         <label for="positionMode">Mode</label>
         <select id="positionMode" aria-label="Planet positioning mode">
@@ -91,6 +91,18 @@
 
     <!-- Planet nav pills - top right -->
     <div class="planet-nav" id="planetNav"></div>
+
+    <div class="ui-shell" id="uiShell">
+      <button id="uiMenuBtn" type="button" class="ui-btn" aria-haspopup="true" aria-expanded="false">UI</button>
+      <aside class="ui-menu hidden" id="uiMenu" aria-label="Interface controls">
+        <div class="ui-menu-title">Interface</div>
+        <div class="ui-menu-actions">
+          <button id="uiShowAll" type="button" class="perf-btn perf-btn-mini">Show All</button>
+          <button id="uiHideAll" type="button" class="perf-btn perf-btn-mini perf-btn-ghost">Hide All</button>
+        </div>
+        <div class="ui-menu-list" id="uiMenuList"></div>
+      </aside>
+    </div>
 
     <div id="tooltip" class="tooltip hidden"></div>
 
