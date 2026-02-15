@@ -269,8 +269,8 @@ const viewAngles = [
 
 const pickables = [], planets = [], orbitLines = [], allMoonRefs = [];
 let earthPlanetRef = null;
-let earthFillLight = null;
-let earthFillLightTarget = null;
+let daylightFillLight = null;
+let daylightFillLightTarget = null;
 let galaxyGroup = null, milkyWayBand = null, galacticCenterGlow = null;
 let solarSystemMarker = null, solarSystemLabel = null;
 let universeGroup = null, universeField = null, universeClusters = null;
@@ -818,13 +818,13 @@ function setupLighting() {
   scene.add(new THREE.HemisphereLight(0x688fc0, 0x090f1e, 0.16));
   root.add(new THREE.PointLight(0xfff0c0, 4.5, 0, 2));
 
-  // Keep Earth visibly lit from the viewer side by using an Earth-only fill light.
-  earthFillLightTarget = new THREE.Object3D();
-  scene.add(earthFillLightTarget);
-  earthFillLight = new THREE.DirectionalLight(0xffffff, 1.8);
-  earthFillLight.layers.set(2);
-  earthFillLight.target = earthFillLightTarget;
-  scene.add(earthFillLight);
+  // Keep all planets and moons in visible daylight from the current viewpoint.
+  daylightFillLightTarget = new THREE.Object3D();
+  scene.add(daylightFillLightTarget);
+  daylightFillLight = new THREE.DirectionalLight(0xffffff, 1.8);
+  daylightFillLight.layers.set(2);
+  daylightFillLight.target = daylightFillLightTarget;
+  scene.add(daylightFillLight);
 }
 
 function setupBackgroundStars() {
@@ -910,21 +910,21 @@ function setupPlanets() {
     // High detail (close view)
     var highGeo = new THREE.SphereGeometry(def.radius, PLANET_SEGMENTS, PLANET_SEGMENTS);
     var highMesh = new THREE.Mesh(highGeo, material);
-    if (isEarth) highMesh.layers.enable(2);
+    highMesh.layers.enable(2);
     highMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(highMesh, 0);
     
     // Medium detail (medium distance)
     var medGeo = new THREE.SphereGeometry(def.radius, mediumSegments, mediumSegments);
     var medMesh = new THREE.Mesh(medGeo, material);
-    if (isEarth) medMesh.layers.enable(2);
+    medMesh.layers.enable(2);
     medMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(medMesh, midDistance);
     
     // Low detail (far view)
     var lowGeo = new THREE.SphereGeometry(def.radius, lowSegments, lowSegments);
     var lowMesh = new THREE.Mesh(lowGeo, material);
-    if (isEarth) lowMesh.layers.enable(2);
+    lowMesh.layers.enable(2);
     lowMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(lowMesh, lowDistance);
     
@@ -1014,6 +1014,7 @@ function setupPlanets() {
       moonPivot.add(moonAnchor);
       var moonMat = new THREE.MeshStandardMaterial({ color: md.color, roughness: 0.9, metalness: 0.01, emissive: new THREE.Color(0x0f1218), emissiveIntensity: 0.04 });
       var moonMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * md.rf, MOON_SEGMENTS, MOON_SEGMENTS), moonMat);
+      moonMesh.layers.enable(2);
       moonAnchor.add(moonMesh);
       if (md.atmo) {
         moonMesh.add(new THREE.Mesh(new THREE.SphereGeometry(def.radius * md.rf * 1.15, Math.max(12, (MOON_SEGMENTS * 0.75) | 0), Math.max(12, (MOON_SEGMENTS * 0.75) | 0)),
@@ -1178,12 +1179,14 @@ function setupKuiperBelt() {
   var plutoPivot = new THREE.Object3D(); plutoPivot.rotation.y = Math.random() * Math.PI * 2; root.add(plutoPivot);
   var plutoAnchor = new THREE.Object3D(); plutoAnchor.position.x = 105; plutoPivot.add(plutoAnchor);
   var plutoMesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, MOON_SEGMENTS, MOON_SEGMENTS), new THREE.MeshStandardMaterial({ color: 0xccbbaa, roughness: 0.92 }));
+  plutoMesh.layers.enable(2);
   plutoAnchor.add(plutoMesh);
   // Charon
   var charonPivot = new THREE.Object3D(); plutoAnchor.add(charonPivot);
   var charonAnchor = new THREE.Object3D(); charonAnchor.position.x = 0.9; charonPivot.add(charonAnchor);
   var charonSegments = Math.max(12, (MOON_SEGMENTS * 0.75) | 0);
   var charonMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, charonSegments, charonSegments), new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.9 }));
+  charonMesh.layers.enable(2);
   charonAnchor.add(charonMesh);
   allMoonRefs.push({ orbitPivot: charonPivot, mesh: charonMesh, material: charonMesh.material, orbitDays: 6.39, spinDays: 6.39, spin: 0, retrograde: false, name: "Charon" });
   var plutoObj = { def: { name: "Pluto", orbitDays: 90560, spinDays: -6.39, radius: 0.45 }, orbitPivot: plutoPivot, anchor: plutoAnchor, mesh: plutoMesh, material: plutoMesh.material, highlight: 0, spin: 0 };
@@ -2518,15 +2521,10 @@ function updateParticleVisibilityLegacy(distanceToTarget) {
   updateSolarDetailVisibility(dist);
 }
 
-function updateEarthAlwaysLit() {
-  if (!earthPlanetRef || !earthFillLight || !earthFillLightTarget) return;
-  var earthPos = earthPlanetRef.mesh.getWorldPosition(v3);
-  var toCamera = v1.copy(camera.position).sub(earthPos);
-  if (toCamera.lengthSq() < 1e-8) toCamera.set(0, 0, 1);
-  toCamera.normalize();
-  var lightDistance = Math.max(18, earthPlanetRef.def.radius * 16);
-  earthFillLight.position.copy(earthPos).add(toCamera.multiplyScalar(lightDistance));
-  earthFillLightTarget.position.copy(earthPos);
+function updateCelestialDaylight() {
+  if (!daylightFillLight || !daylightFillLightTarget) return;
+  daylightFillLight.position.copy(camera.position);
+  daylightFillLightTarget.position.copy(controls.target);
 }
 
 function maybeAdjustResolution(dtMs) {
@@ -2665,7 +2663,7 @@ function animate(now) {
   }
   controls.autoRotate = !STATIC_FRAME_MODE && !autoRotateDisabled && !selectedPlanet && !cameraTween && !controlsDragging;
   controls.update();
-  updateEarthAlwaysLit();
+  updateCelestialDaylight();
   if (!STATIC_FRAME_MODE) maybeAdjustResolution(dtMs);
   renderer.render(scene, camera);
   if (BENCHMARK_MODE && !benchmarkDone) {
