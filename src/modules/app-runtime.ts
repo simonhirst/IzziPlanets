@@ -65,6 +65,7 @@ const ephemerisStore = createEphemerisStore();
 const APP_VERSION = buildAppVersion();
 const prefersReducedMotion = supportsReducedMotion();
 const BENCHMARK_MODE = query.get("bench") === "1";
+const ALWAYS_DAYLIGHT_MODE = query.get("daylight") !== "off";
 const benchmarkDurationParam = Number(query.get("benchMs"));
 const benchmarkWarmupParam = Number(query.get("benchWarmupMs"));
 const BENCHMARK_DURATION_MS = Math.max(1000, Number.isFinite(benchmarkDurationParam) ? benchmarkDurationParam : 12000);
@@ -814,8 +815,8 @@ loadEarthAssets();
 animate();
 
 function setupLighting() {
-  scene.add(new THREE.AmbientLight(0x2a3652, 0.2));
-  scene.add(new THREE.HemisphereLight(0x688fc0, 0x090f1e, 0.16));
+  scene.add(new THREE.AmbientLight(0x2a3652, ALWAYS_DAYLIGHT_MODE ? 0.34 : 0.2));
+  scene.add(new THREE.HemisphereLight(0x688fc0, 0x090f1e, ALWAYS_DAYLIGHT_MODE ? 0.24 : 0.16));
   root.add(new THREE.PointLight(0xfff0c0, 4.5, 0, 2));
 
   // Keep all planets and moons in visible daylight from the current viewpoint.
@@ -898,6 +899,16 @@ function setupPlanets() {
       delete matOpts.map; matOpts.color = def.color;
     }
     var material = new THREE.MeshStandardMaterial(matOpts);
+    if (ALWAYS_DAYLIGHT_MODE) {
+      if (material.map) {
+        material.emissiveMap = material.map;
+        material.emissive = new THREE.Color(0xffffff);
+        material.emissiveIntensity = 0.42;
+      } else {
+        material.emissive = new THREE.Color(def.color);
+        material.emissiveIntensity = 0.34;
+      }
+    }
     
     // Planet LOD: preserve spherical visuals while reducing geometry cost at distance.
     var lod = new THREE.LOD();
@@ -1013,6 +1024,10 @@ function setupPlanets() {
       moonAnchor.position.x = moonOrbitR;
       moonPivot.add(moonAnchor);
       var moonMat = new THREE.MeshStandardMaterial({ color: md.color, roughness: 0.9, metalness: 0.01, emissive: new THREE.Color(0x0f1218), emissiveIntensity: 0.04 });
+      if (ALWAYS_DAYLIGHT_MODE) {
+        moonMat.emissive = new THREE.Color(md.color);
+        moonMat.emissiveIntensity = 0.34;
+      }
       var moonMesh = new THREE.Mesh(new THREE.SphereGeometry(def.radius * md.rf, MOON_SEGMENTS, MOON_SEGMENTS), moonMat);
       moonMesh.layers.enable(2);
       moonAnchor.add(moonMesh);
@@ -1179,6 +1194,10 @@ function setupKuiperBelt() {
   var plutoPivot = new THREE.Object3D(); plutoPivot.rotation.y = Math.random() * Math.PI * 2; root.add(plutoPivot);
   var plutoAnchor = new THREE.Object3D(); plutoAnchor.position.x = 105; plutoPivot.add(plutoAnchor);
   var plutoMesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, MOON_SEGMENTS, MOON_SEGMENTS), new THREE.MeshStandardMaterial({ color: 0xccbbaa, roughness: 0.92 }));
+  if (ALWAYS_DAYLIGHT_MODE) {
+    plutoMesh.material.emissive = new THREE.Color(0xccbbaa);
+    plutoMesh.material.emissiveIntensity = 0.34;
+  }
   plutoMesh.layers.enable(2);
   plutoAnchor.add(plutoMesh);
   // Charon
@@ -1186,6 +1205,10 @@ function setupKuiperBelt() {
   var charonAnchor = new THREE.Object3D(); charonAnchor.position.x = 0.9; charonPivot.add(charonAnchor);
   var charonSegments = Math.max(12, (MOON_SEGMENTS * 0.75) | 0);
   var charonMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, charonSegments, charonSegments), new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.9 }));
+  if (ALWAYS_DAYLIGHT_MODE) {
+    charonMesh.material.emissive = new THREE.Color(0x999999);
+    charonMesh.material.emissiveIntensity = 0.34;
+  }
   charonMesh.layers.enable(2);
   charonAnchor.add(charonMesh);
   allMoonRefs.push({ orbitPivot: charonPivot, mesh: charonMesh, material: charonMesh.material, orbitDays: 6.39, spinDays: 6.39, spin: 0, retrograde: false, name: "Charon" });
@@ -1502,7 +1525,14 @@ function loadEarthAssets() {
     if (moonTex) {
       for (var i = 0; i < allMoonRefs.length; i++) {
         if (allMoonRefs[i].name === "Moon" && allMoonRefs[i].parentPlanet === "Earth") {
-          allMoonRefs[i].material.map = moonTex; allMoonRefs[i].material.color.setHex(0xffffff); allMoonRefs[i].material.needsUpdate = true;
+          allMoonRefs[i].material.map = moonTex;
+          allMoonRefs[i].material.color.setHex(0xffffff);
+          if (ALWAYS_DAYLIGHT_MODE) {
+            allMoonRefs[i].material.emissiveMap = moonTex;
+            allMoonRefs[i].material.emissive = new THREE.Color(0xffffff);
+            allMoonRefs[i].material.emissiveIntensity = 0.42;
+          }
+          allMoonRefs[i].material.needsUpdate = true;
         }
       }
     }
@@ -2617,8 +2647,8 @@ function animate(now) {
         p.mesh.scale.set(scale, scale, scale);
         p.lastScale = scale;
       }
-      var emissiveBase = p.def.name === "Earth" ? 0.16 : 0.05;
-      var emissiveBoost = p.def.name === "Earth" ? 0.22 : 0.3;
+      var emissiveBase = ALWAYS_DAYLIGHT_MODE ? 0.42 : (p.def.name === "Earth" ? 0.16 : 0.05);
+      var emissiveBoost = ALWAYS_DAYLIGHT_MODE ? 0.12 : (p.def.name === "Earth" ? 0.22 : 0.3);
       var emissive = emissiveBase + p.highlight * emissiveBoost;
       if (Math.abs(emissive - p.lastEmissive) > OPACITY_EPSILON) {
         p.material.emissiveIntensity = emissive;
