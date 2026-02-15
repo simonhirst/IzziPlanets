@@ -791,11 +791,29 @@ function setupAppEnhancements() {
     document.body.dataset.power = (qualityTier === "ultraLow" || qualityTier === "low") ? "low" : "high";
   }
   if (brandVersion) brandVersion.textContent = APP_VERSION;
+  updateTopLeftUILayout();
+  if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+    document.fonts.ready.then(function() { updateTopLeftUILayout(); }).catch(function() {});
+  }
   setupWebVitals();
   registerServiceWorker();
   setupGuidedTours();
   setupSearchUI();
   updateProvenancePanel("educational", "Low-precision analytic elements", new Date().toISOString());
+}
+
+function updateTopLeftUILayout() {
+  if (!uiShell) return;
+  var defaultTop = 156;
+  if (window.matchMedia("(max-height: 500px) and (max-width: 900px)").matches) defaultTop = 64;
+  else if (window.matchMedia("(max-width: 640px)").matches) defaultTop = 102;
+
+  var computedTop = defaultTop;
+  if (uiBrand && !uiBrand.classList.contains("hidden")) {
+    var rect = uiBrand.getBoundingClientRect();
+    if (rect.height > 0) computedTop = Math.max(defaultTop, Math.ceil(rect.bottom + 12));
+  }
+  document.documentElement.style.setProperty("--ui-shell-top", computedTop + "px");
 }
 
 /* ---- Init ---- */
@@ -1814,6 +1832,7 @@ function setUIComponentVisibility(key, visible, skipPersist) {
     break;
   }
   if (uiComponentInputs[key]) uiComponentInputs[key].checked = !!uiComponentsVisible[key];
+  if (key === "brand") updateTopLeftUILayout();
   if (!skipPersist) saveUIComponentVisibility();
 }
 
@@ -2303,6 +2322,7 @@ function setupEvents() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight, false);
+    updateTopLeftUILayout();
     updatePerformanceTelemetry(performance.now(), true);
   };
   window.addEventListener("resize", onResize);

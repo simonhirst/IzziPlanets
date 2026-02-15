@@ -388,7 +388,7 @@ body::after {
 /* ---- Global UI Controls ---- */
 .ui-shell {
   position: fixed;
-  top: calc(156px + env(safe-area-inset-top, 0px));
+  top: calc(var(--ui-shell-top, 156px) + env(safe-area-inset-top, 0px));
   left: calc(20px + var(--safe-left));
   z-index: 19;
   display: flex;
@@ -921,7 +921,7 @@ body::after {
    ============================================ */
 @media (max-width: 640px) {
   .ui-shell {
-    top: calc(102px + env(safe-area-inset-top, 0px));
+    top: calc(var(--ui-shell-top, 102px) + env(safe-area-inset-top, 0px));
     left: calc(10px + var(--safe-left));
     gap: 6px;
   }
@@ -1080,7 +1080,7 @@ body::after {
    ============================================ */
 @media (max-height: 500px) and (max-width: 900px) {
   .ui-shell {
-    top: calc(64px + env(safe-area-inset-top, 0px));
+    top: calc(var(--ui-shell-top, 64px) + env(safe-area-inset-top, 0px));
     left: calc(6px + var(--safe-left));
   }
   .ui-menu {
