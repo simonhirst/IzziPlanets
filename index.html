@@ -2,31 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Izzi's Universe</title>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Space+Grotesk:wght@300;400;500;600&display=swap"
-      rel="stylesheet"
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://ssd.jpl.nasa.gov; font-src 'self' data:; worker-src 'self' blob:"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Izzi's Universe</title>
   </head>
   <body>
+    <a class="skip-link" href="#uiControlsPanel">Skip to controls</a>
+
     <canvas id="scene"></canvas>
 
-    <!-- Top-left title -->
     <div class="brand" id="uiBrand">
       <div class="brand-title">
         <span class="brand-izzi">Izzi's</span>
         <span class="brand-universe">Universe</span>
       </div>
       <div class="brand-line"></div>
-      <div class="brand-version">v0.17</div>
+      <div class="brand-version" id="brandVersion">v0.18</div>
     </div>
 
-    <!-- Desktop performance telemetry -->
     <div class="perf-shell" id="perfShell" aria-live="polite">
       <section class="perf-panel" id="perfPanel" aria-label="Performance telemetry panel">
         <header class="perf-header">
@@ -52,7 +49,6 @@
       <button id="perfShowBtn" type="button" class="perf-show-btn hidden">Performance Settings</button>
     </div>
 
-    <!-- Scale indicator - bottom center -->
     <div class="scale-bar" id="uiScaleBar">
       <div class="scale-track">
         <div class="scale-pip" data-label="Sun" style="left: 0%"></div>
@@ -66,12 +62,10 @@
       </div>
     </div>
 
-    <!-- Info bar - shows current focus -->
     <div class="info-bar" id="infoBar">
       <span class="info-label" id="infoLabel"></span>
     </div>
 
-    <!-- Controls panel - bottom right -->
     <div class="controls-panel" id="uiControlsPanel">
       <div class="control-group">
         <label for="positionMode">Mode</label>
@@ -81,19 +75,32 @@
         </select>
       </div>
       <div class="control-group">
+        <label for="dataMode">Data</label>
+        <select id="dataMode" aria-label="Data fidelity mode">
+          <option value="educational">Educational</option>
+          <option value="accurate">High Accuracy</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label for="guidedTour">Tour</label>
+        <select id="guidedTour" aria-label="Guided camera preset">
+          <option value="">Manual</option>
+        </select>
+      </div>
+      <div class="control-group">
         <label for="timeScale">Time</label>
         <input id="timeScale" type="range" min="0" max="100" step="1" value="30" />
       </div>
-      <button class="btn-reset" id="btnReset" title="Reset view">
+      <button class="btn-reset" id="btnReset" title="Reset view" aria-label="Reset view">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8a6 6 0 0 1 10.2-4.3L11 5h4V1l-1.6 1.6A7.5 7.5 0 0 0 .5 8h1.5zm12 0a6 6 0 0 1-10.2 4.3L5 11H1v4l1.6-1.6A7.5 7.5 0 0 0 15.5 8H14z" fill="currentColor"/></svg>
       </button>
     </div>
 
-    <!-- Planet nav pills - top right -->
     <div class="planet-nav" id="planetNav"></div>
 
     <div class="ui-shell" id="uiShell">
       <button id="uiMenuBtn" type="button" class="ui-btn" aria-haspopup="true" aria-expanded="false">UI</button>
+      <button id="openSearchBtn" type="button" class="ui-btn">Search</button>
       <aside class="ui-menu hidden" id="uiMenu" aria-label="Interface controls">
         <div class="ui-menu-title">Interface</div>
         <div class="ui-menu-actions">
@@ -104,10 +111,32 @@
       </aside>
     </div>
 
+    <aside id="provenancePanel" class="provenance-panel" aria-live="polite">
+      <h3>Data Provenance</h3>
+      <p id="provenanceMode">Mode: Educational</p>
+      <p id="provenanceSource">Source: Low-precision analytic elements</p>
+      <p id="provenanceUpdated">Updated: --</p>
+      <p class="provenance-note">Educational mode is optimized for responsiveness. High Accuracy mode uses precomputed JPL snapshots when available.</p>
+    </aside>
+
+    <aside id="planetInfoDrawer" class="planet-info hidden" aria-live="polite">
+      <h3 id="planetInfoTitle">Planet Data</h3>
+      <p id="planetInfoStats">Select a body to view details.</p>
+    </aside>
+
+    <dialog id="searchDialog" class="search-dialog">
+      <form method="dialog">
+        <label for="searchInput">Find body</label>
+        <input id="searchInput" type="search" autocomplete="off" placeholder="Earth, Jupiter, Andromeda..." />
+        <menu>
+          <button id="searchCloseBtn" value="cancel">Close</button>
+        </menu>
+      </form>
+      <div id="searchResults" class="search-results"></div>
+    </dialog>
+
     <div id="tooltip" class="tooltip hidden"></div>
 
-    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
-    <script defer src="./main.js"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

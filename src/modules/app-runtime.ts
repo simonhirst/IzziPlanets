@@ -1,3 +1,12 @@
+﻿// @ts-nocheck
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { KTX2Loader } from "three/examples/jsm/loaders/KTX2Loader.js";
+import { captureError, emitTelemetry, setupWebVitals } from "./observability";
+import { createEphemerisStore } from "./ephemeris-store";
+import { buildAppVersion, buildGuidedTourPresets, supportsReducedMotion, uid } from "./app-utils";
+import "../styles.css";
+
 const canvas = document.getElementById("scene");
 const tooltip = document.getElementById("tooltip");
 const timeScaleInput = document.getElementById("timeScale");
@@ -28,23 +37,62 @@ const uiMenuBtn = document.getElementById("uiMenuBtn");
 const uiMenuList = document.getElementById("uiMenuList");
 const uiShowAllBtn = document.getElementById("uiShowAll");
 const uiHideAllBtn = document.getElementById("uiHideAll");
+const dataModeInput = document.getElementById("dataMode");
+const guidedTourInput = document.getElementById("guidedTour");
+const brandVersion = document.getElementById("brandVersion");
+const provenanceModeEl = document.getElementById("provenanceMode");
+const provenanceSourceEl = document.getElementById("provenanceSource");
+const provenanceUpdatedEl = document.getElementById("provenanceUpdated");
+const planetInfoDrawer = document.getElementById("planetInfoDrawer");
+const planetInfoTitle = document.getElementById("planetInfoTitle");
+const planetInfoStats = document.getElementById("planetInfoStats");
+const searchDialog = document.getElementById("searchDialog");
+const searchInput = document.getElementById("searchInput");
+const searchResults = document.getElementById("searchResults");
+const openSearchBtn = document.getElementById("openSearchBtn");
 const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
-const isDesktopBrowser = !/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) &&
-  !!(window.matchMedia && window.matchMedia("(pointer: fine)").matches) &&
-  window.innerWidth >= 960;
 const query = new URLSearchParams(window.location.search);
+const autoRotateDisabled = query.get("autorotate") === "off";
+const STATIC_FRAME_MODE = query.get("staticFrame") === "1";
+const CI_VISUAL_MODE = query.get("ciVisual") === "1";
 const profileMode = (query.get("profile") || "optimized").toLowerCase();
 const useLegacyProfile = profileMode === "legacy";
 const useRoundImpostors = !useLegacyProfile;
 const useEfficientHoverPicking = !useLegacyProfile;
 const useUnifiedVisibility = !useLegacyProfile;
+const guidedTourPresets = buildGuidedTourPresets();
+const ephemerisStore = createEphemerisStore();
+const APP_VERSION = buildAppVersion();
+const prefersReducedMotion = supportsReducedMotion();
 const BENCHMARK_MODE = query.get("bench") === "1";
 const benchmarkDurationParam = Number(query.get("benchMs"));
 const benchmarkWarmupParam = Number(query.get("benchWarmupMs"));
 const BENCHMARK_DURATION_MS = Math.max(1000, Number.isFinite(benchmarkDurationParam) ? benchmarkDurationParam : 12000);
 const BENCHMARK_WARMUP_MS = Math.max(0, Number.isFinite(benchmarkWarmupParam) ? benchmarkWarmupParam : 2000);
+let pointCloudWorker = null;
+const pointCloudCallbacks = {};
+
+if (typeof Worker !== "undefined") {
+  try {
+    pointCloudWorker = new Worker(new URL("../workers/point-cloud.worker.ts", import.meta.url), { type: "module" });
+    pointCloudWorker.onmessage = function(event) {
+      var payload = event.data || {};
+      var callback = pointCloudCallbacks[payload.id];
+      if (!callback) return;
+      delete pointCloudCallbacks[payload.id];
+      callback(new Float32Array(payload.positions));
+    };
+  } catch (error) {
+    captureError(error, "point-cloud.worker.init");
+  }
+}
 
 var benchmarkSeed = Number(query.get("seed"));
+const SEED_PRESETS = { cinematic: 424242, classroom: 987654, benchmark: 123456, sunrise: 777111 };
+if (!(Number.isFinite(benchmarkSeed) && benchmarkSeed > 0)) {
+  var seedPreset = (query.get("seedPreset") || "").toLowerCase();
+  if (SEED_PRESETS[seedPreset]) benchmarkSeed = SEED_PRESETS[seedPreset];
+}
 if (Number.isFinite(benchmarkSeed) && benchmarkSeed > 0) {
   var randState = (benchmarkSeed >>> 0) || 1;
   Math.random = function() {
@@ -105,25 +153,33 @@ let currentPixelRatio = maxDevicePixelRatio;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, alpha: false, powerPreference: "high-performance", logarithmicDepthBuffer: quality.logDepth });
 renderer.setPixelRatio(currentPixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 const maxAnisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), quality.maxAnisotropy);
 const textureLoader = new THREE.TextureLoader();
 textureLoader.setCrossOrigin("anonymous");
+let ktx2Loader = null;
+try {
+  ktx2Loader = new KTX2Loader();
+  ktx2Loader.setTranscoderPath("/basis/");
+  ktx2Loader.detectSupport(renderer);
+} catch (error) {
+  captureError(error, "ktx2.loader.init");
+}
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x020308);
 const camera = new THREE.PerspectiveCamera(54, window.innerWidth / window.innerHeight, 0.01, 52000000);
 camera.position.set(0, 40, 170);
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.055;
 controls.enablePan = false;
 controls.minDistance = 2;
 controls.maxDistance = 24000000;
 controls.target.set(0, 0, 0);
-controls.autoRotate = true;
+controls.autoRotate = !prefersReducedMotion && !autoRotateDisabled && !STATIC_FRAME_MODE;
 controls.autoRotateSpeed = 0.18;
 
 if (query.get("view") === "galaxy") { camera.position.set(0, 3200, 9400); controls.autoRotate = false; }
@@ -131,10 +187,11 @@ else if (query.get("view") === "universe") { camera.position.set(0, 2200000, 780
 else if (query.get("view") === "all") { camera.position.set(0, 6400000, 21000000); controls.autoRotate = false; }
 
 const root = new THREE.Object3D();
-root.rotation.x = THREE.Math.degToRad(3.8);
+root.rotation.x = THREE.MathUtils.degToRad(3.8);
 scene.add(root);
 
 const raycaster = new THREE.Raycaster();
+raycaster.layers.set(1);
 const pointerNdc = new THREE.Vector2(9, 9);
 const pointerPx = new THREE.Vector2();
 const pointerUpPos = new THREE.Vector2();
@@ -143,7 +200,7 @@ let pointerInside = false, hoveredPlanet = null, selectedPlanet = null, selected
 let controlsDragging = false, cameraTween = null, pointerDownPos = null;
 let pointerMoved = false;
 
-// Exponential slider mapping: 0-100 → 0.01 to 365 sim-days/sec
+// Exponential slider mapping: 0-100  0.01 to 365 sim-days/sec
 // Gives fine control at slow speeds and big range at high speeds
 const POSITION_MODE_SIM = "sim";
 const POSITION_MODE_LIVE = "live";
@@ -155,6 +212,9 @@ const UI_COMPONENT_STORAGE_KEY = "izzi.ui.components.visible." + performanceStor
 const PERFORMANCE_METRICS = [
   { key: "fps", label: "FPS" },
   { key: "frame", label: "Frame Time" },
+  { key: "frameP50", label: "Frame P50" },
+  { key: "frameP90", label: "Frame P90" },
+  { key: "frameP99", label: "Frame P99" },
   { key: "drawCalls", label: "Draw Calls" },
   { key: "triangles", label: "Triangles" },
   { key: "points", label: "Points" },
@@ -164,6 +224,21 @@ const PERFORMANCE_METRICS = [
   { key: "quality", label: "Quality Mode" },
   { key: "distance", label: "Camera Dist" },
 ];
+const PERFORMANCE_METRIC_HELP = {
+  fps: "How many frames are rendered each second. Higher is smoother.",
+  frame: "Time to render the last frame in milliseconds. Lower is better.",
+  frameP50: "Median frame time. Stable baseline for smoothness.",
+  frameP90: "90th percentile frame time. Captures occasional slow frames.",
+  frameP99: "99th percentile frame time. Captures worst stutters.",
+  drawCalls: "GPU draw submissions this frame. Lower usually improves performance.",
+  triangles: "Triangle count drawn by the GPU this frame.",
+  points: "Point-sprite count drawn by the GPU this frame.",
+  dpr: "Current device pixel ratio used for rendering.",
+  resolution: "Internal render resolution after dynamic scaling.",
+  memory: "Approximate geometry and texture counts tracked by Three.js.",
+  quality: "Current quality profile and whether adaptive resolution is active.",
+  distance: "Distance from camera to focus target.",
+};
 const UI_COMPONENTS = [
   { key: "brand", label: "Brand", element: uiBrand, defaultVisible: true },
   { key: "navigation", label: "Planet Navigation", element: planetNav, defaultVisible: true },
@@ -180,6 +255,8 @@ function sliderToTimeWarp(v) {
 var timeWarpTarget = sliderToTimeWarp(Number(timeScaleInput.value));
 var timeWarp = timeWarpTarget;
 var positionMode = positionModeInput ? positionModeInput.value : POSITION_MODE_SIM;
+var dataMode = dataModeInput ? dataModeInput.value : "educational";
+var ephemerisSnapshot = null;
 const selectedCameraOffset = new THREE.Vector3();
 const selectedCameraTarget = new THREE.Vector3();
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
@@ -200,6 +277,7 @@ let asteroidBeltMesh = null, kuiperBeltMesh = null;
 const namedGalaxies = [];
 const nebulaeMeshes = [];
 const asteroidBeltFadeMaterials = [];
+const pointBudgetEntries = [];
 let planetNavItems = [];
 let lastScalePct = -1;
 let scaleScrubActive = false;
@@ -215,6 +293,8 @@ let lastAsteroidVisibleState = null;
 let lastKuiperVisibleState = null;
 let lastGA = -1, lastUA = -1;
 let lastSolarSystemDetailVisible = null;
+let galaxyInitialized = false;
+let universeInitialized = false;
 const OPACITY_EPSILON = 0.003;
 const SOLAR_DETAIL_HIDE_DIST = 1800;
 const SOLAR_DETAIL_SHOW_DIST = 1500;
@@ -227,6 +307,7 @@ let dynamicResolutionElapsedMs = 0;
 let perfFrameElapsedMs = 0;
 let perfFrameCount = 0;
 let perfLastFrameMs = 16.7;
+let perfFrameSamples = [];
 let perfLastUpdateAt = 0;
 let perfPanelVisible = true;
 let perfMenuOpen = false;
@@ -270,12 +351,12 @@ const GALAXY_VISIBILITY_MARGIN = 120;
 const UNIVERSE_VISIBILITY_MARGIN = 4200;
 
 const EARTH_TEXTURES = {
-  day: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_day_4096.jpg",
-  normal: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_normal_2048.jpg",
-  specular: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_specular_2048.jpg",
-  lights: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_lights_2048.png",
-  clouds: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_clouds_1024.png",
-  moon: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/moon_1024.jpg",
+  day: "/assets/textures/planets/earth_day_4096.jpg",
+  normal: "/assets/textures/planets/earth_normal_2048.jpg",
+  specular: "/assets/textures/planets/earth_specular_2048.jpg",
+  lights: "/assets/textures/planets/earth_lights_2048.png",
+  clouds: "/assets/textures/planets/earth_clouds_1024.png",
+  moon: "/assets/textures/planets/moon_1024.jpg",
 };
 
 const defs = [
@@ -325,6 +406,29 @@ const defs = [
 /* ---- Procedural Textures ---- */
 function makeCanvas(w, h) { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; }
 
+function buildSphericalPositions(count, minR, maxR) {
+  var pos = new Float32Array(count * 3);
+  for (var i = 0; i < count; i++) {
+    var r = minR + Math.random() * (maxR - minR);
+    var th = Math.random() * Math.PI * 2;
+    var ph = Math.acos(THREE.MathUtils.randFloatSpread(2));
+    pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+    pos[i * 3 + 1] = r * Math.cos(ph);
+    pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+  }
+  return pos;
+}
+
+function requestSphericalPositions(count, minR, maxR, onDone) {
+  if (!pointCloudWorker || query.get("workerClouds") === "off") {
+    onDone(buildSphericalPositions(count, minR, maxR));
+    return;
+  }
+  var id = uid("cloud");
+  pointCloudCallbacks[id] = onDone;
+  pointCloudWorker.postMessage({ id: id, count: count, minR: minR, maxR: maxR });
+}
+
 function freezeStaticObject(obj) {
   if (!obj || useLegacyProfile || !obj.updateMatrix) return obj;
   obj.matrixAutoUpdate = false;
@@ -334,8 +438,35 @@ function freezeStaticObject(obj) {
 
 function disableFrustumCulling(obj) {
   if (!obj || useLegacyProfile) return obj;
-  obj.frustumCulled = false;
+  // Keep culling enabled by default and override only when explicitly needed.
+  obj.frustumCulled = true;
   return obj;
+}
+
+function registerPointBudget(points, nearFraction, farFraction, startDist, endDist) {
+  if (!points || !points.geometry || !points.geometry.attributes || !points.geometry.attributes.position) return;
+  pointBudgetEntries.push({
+    points: points,
+    baseCount: points.geometry.attributes.position.count,
+    nearFraction: nearFraction,
+    farFraction: farFraction,
+    startDist: startDist,
+    endDist: endDist,
+    lastCount: -1,
+  });
+}
+
+function updatePointBudgets(distanceToTarget) {
+  for (var i = 0; i < pointBudgetEntries.length; i++) {
+    var entry = pointBudgetEntries[i];
+    var t = THREE.MathUtils.clamp((distanceToTarget - entry.startDist) / (entry.endDist - entry.startDist), 0, 1);
+    var fraction = entry.nearFraction + (entry.farFraction - entry.nearFraction) * t;
+    var nextCount = Math.max(1, Math.floor(entry.baseCount * fraction));
+    if (nextCount !== entry.lastCount) {
+      entry.points.geometry.setDrawRange(0, nextCount);
+      entry.lastCount = nextCount;
+    }
+  }
 }
 
 var _particleTex = null;
@@ -387,7 +518,7 @@ function getPlanetImpostorTexture(hexColor) {
   ctx.fill();
 
   var tex = new THREE.CanvasTexture(c);
-  tex.encoding = THREE.sRGBEncoding;
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   planetImpostorTextureCache[key] = tex;
   return tex;
@@ -568,11 +699,106 @@ const ORBITAL_ELEMENTS = {
   Pluto: { N0: 110.30347, N1: 0, i0: 17.14175, i1: 0, w0: 113.76329, w1: 0, a0: 39.48168677, a1: 0, e0: 0.24880766, e1: 0, M0: 14.53, M1: 0.0039757 },
 };
 
+function updateProvenancePanel(mode, source, updatedAt) {
+  if (provenanceModeEl) provenanceModeEl.textContent = "Mode: " + (mode === "accurate" ? "High Accuracy" : "Educational");
+  if (provenanceSourceEl) provenanceSourceEl.textContent = "Source: " + source;
+  if (provenanceUpdatedEl) provenanceUpdatedEl.textContent = "Updated: " + (updatedAt || "--");
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", function() {
+    navigator.serviceWorker.register("./sw.js").catch(function(error) {
+      captureError(error, "service-worker.register");
+    });
+  });
+}
+
+function setupSearchUI() {
+  if (!searchDialog || !searchInput || !searchResults || !openSearchBtn) return;
+  var closeSearch = function() {
+    if (typeof searchDialog.close === "function") searchDialog.close();
+  };
+  openSearchBtn.addEventListener("click", function() {
+    if (typeof searchDialog.showModal === "function") searchDialog.showModal();
+    searchInput.value = "";
+    searchResults.innerHTML = "";
+    searchInput.focus();
+  });
+  searchInput.addEventListener("input", function() {
+    var term = searchInput.value.trim().toLowerCase();
+    searchResults.innerHTML = "";
+    if (!term) return;
+    var matches = [];
+    for (var i = 0; i < planets.length; i++) {
+      if (planets[i].def.name.toLowerCase().indexOf(term) >= 0) matches.push(planets[i]);
+    }
+    for (var i = 0; i < matches.length; i++) {
+      (function(planet) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "search-result-item";
+        btn.textContent = planet.def.name;
+        btn.addEventListener("click", function() {
+          focusPlanet(planet);
+          closeSearch();
+        });
+        searchResults.appendChild(btn);
+      })(matches[i]);
+    }
+  });
+  searchDialog.addEventListener("close", function() {
+    searchResults.innerHTML = "";
+    searchInput.value = "";
+  });
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "/" && !e.metaKey && !e.ctrlKey && document.activeElement !== searchInput) {
+      e.preventDefault();
+      if (typeof searchDialog.showModal === "function") searchDialog.showModal();
+      searchInput.focus();
+    } else if (e.key === "Escape" && searchDialog.open) {
+      closeSearch();
+    }
+  });
+}
+
+function setupGuidedTours() {
+  if (!guidedTourInput) return;
+  for (var i = 0; i < guidedTourPresets.length; i++) {
+    var preset = guidedTourPresets[i];
+    var option = document.createElement("option");
+    option.value = preset.key;
+    option.textContent = preset.label;
+    guidedTourInput.appendChild(option);
+  }
+  guidedTourInput.addEventListener("change", function() {
+    var selected = "";
+    if (guidedTourInput && guidedTourInput.value) selected = guidedTourInput.value;
+    for (var i = 0; i < guidedTourPresets.length; i++) {
+      var preset = guidedTourPresets[i];
+      if (preset.key !== selected) continue;
+      setCameraDistance(preset.distance, true);
+      break;
+    }
+  });
+}
+
+function setupAppEnhancements() {
+  if (document.body) {
+    document.body.dataset.power = (qualityTier === "ultraLow" || qualityTier === "low") ? "low" : "high";
+  }
+  if (brandVersion) brandVersion.textContent = APP_VERSION;
+  setupWebVitals();
+  registerServiceWorker();
+  setupGuidedTours();
+  setupSearchUI();
+  updateProvenancePanel("educational", "Low-precision analytic elements", new Date().toISOString());
+}
+
 /* ---- Init ---- */
+setupAppEnhancements();
 setupLighting();
 setupBackgroundStars();
-setupMilkyWay();
-setupUniverse();
 setupSun();
 setupPlanets();
 setupAsteroidBelt();
@@ -598,7 +824,7 @@ function setupBackgroundStars() {
   var pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
   var tints = [new THREE.Color(0xff8866), new THREE.Color(0xffcc88), new THREE.Color(0x88aaff), new THREE.Color(0xaaccff)];
   for (var i = 0; i < n; i++) {
-    var r = 2000 + Math.random() * 42000, th = Math.random() * Math.PI * 2, ph = Math.acos(THREE.Math.randFloatSpread(2));
+    var r = 2000 + Math.random() * 42000, th = Math.random() * Math.PI * 2, ph = Math.acos(THREE.MathUtils.randFloatSpread(2));
     pos[i*3] = r*Math.sin(ph)*Math.cos(th); pos[i*3+1] = r*Math.cos(ph); pos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
     var c = tints[i % tints.length]; col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
   }
@@ -607,20 +833,25 @@ function setupBackgroundStars() {
   var richStars = new THREE.Points(geo, new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.8, depthWrite: false, map: getParticleTexture() }));
   disableFrustumCulling(richStars);
   freezeStaticObject(richStars);
+  registerPointBudget(richStars, 1, 0.7, 0, 24000000);
   scene.add(richStars);
 }
 
 function addStarLayer(count, minR, maxR, color, size, opacity) {
-  var geo = new THREE.BufferGeometry(), pos = new Float32Array(count * 3);
-  for (var i = 0; i < count; i++) {
-    var r = minR + Math.random() * (maxR - minR), th = Math.random() * Math.PI * 2, ph = Math.acos(THREE.Math.randFloatSpread(2));
-    pos[i*3] = r*Math.sin(ph)*Math.cos(th); pos[i*3+1] = r*Math.cos(ph); pos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
-  }
-  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
   var starLayer = new THREE.Points(geo, new THREE.PointsMaterial({ color: color, size: size * 1.3, sizeAttenuation: true, transparent: true, opacity: opacity, depthWrite: false, map: getParticleTexture() }));
+  starLayer.visible = false;
   disableFrustumCulling(starLayer);
   freezeStaticObject(starLayer);
+  registerPointBudget(starLayer, 1, 0.75, 0, 24000000);
   scene.add(starLayer);
+
+  requestSphericalPositions(count, minR, maxR, function(positions) {
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geo.computeBoundingSphere();
+    starLayer.visible = true;
+  });
 }
 
 function setupSun() {
@@ -668,19 +899,19 @@ function setupPlanets() {
     // High detail (close view)
     var highGeo = new THREE.SphereGeometry(def.radius, PLANET_SEGMENTS, PLANET_SEGMENTS);
     var highMesh = new THREE.Mesh(highGeo, material);
-    highMesh.rotation.z = THREE.Math.degToRad(def.tilt);
+    highMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(highMesh, 0);
     
     // Medium detail (medium distance)
     var medGeo = new THREE.SphereGeometry(def.radius, mediumSegments, mediumSegments);
     var medMesh = new THREE.Mesh(medGeo, material);
-    medMesh.rotation.z = THREE.Math.degToRad(def.tilt);
+    medMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(medMesh, midDistance);
     
     // Low detail (far view)
     var lowGeo = new THREE.SphereGeometry(def.radius, lowSegments, lowSegments);
     var lowMesh = new THREE.Mesh(lowGeo, material);
-    lowMesh.rotation.z = THREE.Math.degToRad(def.tilt);
+    lowMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(lowMesh, lowDistance);
     
     // Very far impostor. Optimized profile uses round alpha-masked sprites.
@@ -707,6 +938,7 @@ function setupPlanets() {
     
     // Store reference to the high-detail mesh for picking and animations
     var planetMesh = highMesh;
+    planetMesh.layers.enable(1);
     pickables.push(planetMesh);
 
     var atmosphereMesh = null, cloudMesh = null;
@@ -729,7 +961,7 @@ function setupPlanets() {
     if (def.ring) {
       var ringMat;
       var ringGeo = new THREE.RingGeometry(def.ring.inner, def.ring.outer, RING_SEGMENTS, 8);
-      // Fix UVs: remap from 2D projection to radial (U = inner→outer, V = 0.5)
+      // Fix UVs: remap from 2D projection to radial (U = innerouter, V = 0.5)
       var ringUvs = ringGeo.attributes.uv;
       var ringPositions = ringGeo.attributes.position;
       for (var ri = 0; ri < ringUvs.count; ri++) {
@@ -744,11 +976,11 @@ function setupPlanets() {
         ringMat = new THREE.MeshStandardMaterial({ color: def.ring.color || 0x667788, side: THREE.DoubleSide, transparent: true, opacity: def.ring.opacity || 0.3, roughness: 0.9, metalness: 0.02 });
       }
       var ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = Math.PI / 2; ring.rotation.y = THREE.Math.degToRad(12);
+      ring.rotation.x = Math.PI / 2; ring.rotation.y = THREE.MathUtils.degToRad(12);
       planetMesh.add(ring);
     }
 
-    var planet = { def: def, orbitPivot: orbitPivot, anchor: anchor, mesh: planetMesh, lod: lod, clouds: cloudMesh, atmosphere: atmosphereMesh, material: material, highlight: 0, spin: Math.random() * Math.PI * 2 };
+    var planet = { def: def, orbitPivot: orbitPivot, anchor: anchor, mesh: planetMesh, lod: lod, clouds: cloudMesh, atmosphere: atmosphereMesh, material: material, highlight: 0, spin: Math.random() * Math.PI * 2, lastScale: 1, lastEmissive: 0.05 };
     planetMesh.userData.planet = planet;
     planets.push(planet);
     if (def.name === "Earth") earthPlanetRef = planet;
@@ -760,7 +992,7 @@ function setupPlanets() {
       var moonOrbit = createOrbit(moonOrbitR, moonOrbitLineMat);
       anchor.add(moonOrbit); orbitLines.push(moonOrbit);
       var moonPivot = new THREE.Object3D();
-      if (md.tilt) moonPivot.rotation.z = THREE.Math.degToRad(md.tilt);
+      if (md.tilt) moonPivot.rotation.z = THREE.MathUtils.degToRad(md.tilt);
       anchor.add(moonPivot);
       var moonAnchor = new THREE.Object3D();
       moonAnchor.position.x = moonOrbitR;
@@ -797,7 +1029,7 @@ function setupAsteroidBelt() {
   var dustPos = new Float32Array(dustCount * 3), dustCol = new Float32Array(dustCount * 3);
   for (var i = 0; i < dustCount; i++) {
     var r = beltRadius(), a = Math.random() * Math.PI * 2;
-    var ySpread = THREE.Math.randFloatSpread(1.8) * (1 - 0.4 * Math.abs(r - 39) / 3);
+    var ySpread = THREE.MathUtils.randFloatSpread(1.8) * (1 - 0.4 * Math.abs(r - 39) / 3);
     dustPos[i*3] = Math.cos(a) * r; dustPos[i*3+1] = ySpread; dustPos[i*3+2] = Math.sin(a) * r;
     var g = 0.38 + Math.random() * 0.18;
     dustCol[i*3] = g * 1.05; dustCol[i*3+1] = g * 0.98; dustCol[i*3+2] = g * 0.88;
@@ -810,6 +1042,7 @@ function setupAsteroidBelt() {
   }));
   disableFrustumCulling(dustPoints);
   freezeStaticObject(dustPoints);
+  registerPointBudget(dustPoints, 1, 0.5, 50, 2000);
   beltGroup.add(dustPoints);
 
   // Layer 2: Medium rocks
@@ -819,7 +1052,7 @@ function setupAsteroidBelt() {
   var rockTints = [[0.55,0.48,0.40],[0.50,0.50,0.48],[0.62,0.55,0.45],[0.45,0.42,0.38],[0.58,0.52,0.44]];
   for (var i = 0; i < medCount; i++) {
     var r = beltRadius(), a = Math.random() * Math.PI * 2;
-    var ySpread = THREE.Math.randFloatSpread(2.2) * (1 - 0.3 * Math.abs(r - 39) / 3);
+    var ySpread = THREE.MathUtils.randFloatSpread(2.2) * (1 - 0.3 * Math.abs(r - 39) / 3);
     medPos[i*3] = Math.cos(a) * r; medPos[i*3+1] = ySpread; medPos[i*3+2] = Math.sin(a) * r;
     var t = rockTints[i % rockTints.length], v = 0.85 + Math.random() * 0.3;
     medCol[i*3] = t[0] * v; medCol[i*3+1] = t[1] * v; medCol[i*3+2] = t[2] * v;
@@ -831,6 +1064,7 @@ function setupAsteroidBelt() {
   }));
   disableFrustumCulling(mediumPoints);
   freezeStaticObject(mediumPoints);
+  registerPointBudget(mediumPoints, 1, 0.45, 50, 2200);
   beltGroup.add(mediumPoints);
 
   // Layer 3: Larger rocks (sparse, bigger)
@@ -839,7 +1073,7 @@ function setupAsteroidBelt() {
   var lgPos = new Float32Array(lgCount * 3), lgCol = new Float32Array(lgCount * 3);
   for (var i = 0; i < lgCount; i++) {
     var r = beltRadius(), a = Math.random() * Math.PI * 2;
-    lgPos[i*3] = Math.cos(a) * r; lgPos[i*3+1] = THREE.Math.randFloatSpread(2.8); lgPos[i*3+2] = Math.sin(a) * r;
+    lgPos[i*3] = Math.cos(a) * r; lgPos[i*3+1] = THREE.MathUtils.randFloatSpread(2.8); lgPos[i*3+2] = Math.sin(a) * r;
     var g = 0.48 + Math.random() * 0.22;
     lgCol[i*3] = g * 1.1; lgCol[i*3+1] = g; lgCol[i*3+2] = g * 0.85;
   }
@@ -850,6 +1084,7 @@ function setupAsteroidBelt() {
   }));
   disableFrustumCulling(largePoints);
   freezeStaticObject(largePoints);
+  registerPointBudget(largePoints, 1, 0.4, 50, 2600);
   beltGroup.add(largePoints);
 
   // Layer 4: Subtle dust glow band (additive, gives the belt a soft haze)
@@ -858,7 +1093,7 @@ function setupAsteroidBelt() {
   var glowPos = new Float32Array(glowCount * 3);
   for (var i = 0; i < glowCount; i++) {
     var r = 36.5 + Math.random() * 5, a = Math.random() * Math.PI * 2;
-    glowPos[i*3] = Math.cos(a) * r; glowPos[i*3+1] = THREE.Math.randFloatSpread(1.0); glowPos[i*3+2] = Math.sin(a) * r;
+    glowPos[i*3] = Math.cos(a) * r; glowPos[i*3+1] = THREE.MathUtils.randFloatSpread(1.0); glowPos[i*3+2] = Math.sin(a) * r;
   }
   glowGeo.setAttribute("position", new THREE.BufferAttribute(glowPos, 3));
   var glowPoints = new THREE.Points(glowGeo, new THREE.PointsMaterial({
@@ -866,6 +1101,7 @@ function setupAsteroidBelt() {
   }));
   disableFrustumCulling(glowPoints);
   freezeStaticObject(glowPoints);
+  registerPointBudget(glowPoints, 1, 0.35, 50, 2600);
   beltGroup.add(glowPoints);
 
   // Named asteroids as small meshes: Ceres, Vesta, Pallas, Hygiea
@@ -881,7 +1117,7 @@ function setupAsteroidBelt() {
     aPivot.rotation.y = Math.random() * Math.PI * 2;
     beltGroup.add(aPivot);
     var aAnchor = new THREE.Object3D();
-    aAnchor.position.set(ad.orbit, THREE.Math.randFloatSpread(0.6), 0);
+    aAnchor.position.set(ad.orbit, THREE.MathUtils.randFloatSpread(0.6), 0);
     aPivot.add(aAnchor);
     var aMesh = new THREE.Mesh(
       new THREE.IcosahedronGeometry(ad.r, 3),
@@ -892,6 +1128,7 @@ function setupAsteroidBelt() {
     // Slow orbit (4-6 year period range, scaled)
     var orbDays = 1600 + ai * 400;
     planets.push({ def: { name: ad.name, orbitDays: orbDays, spinDays: 0.38, radius: ad.r }, orbitPivot: aPivot, anchor: aAnchor, mesh: aMesh, material: aMesh.material, highlight: 0, spin: Math.random() * 6 });
+    aMesh.layers.enable(1);
     pickables.push(aMesh);
     aMesh.userData.planet = planets[planets.length - 1];
   }
@@ -911,12 +1148,13 @@ function setupKuiperBelt() {
   var geo = new THREE.BufferGeometry(), count = kCount, pos = new Float32Array(count * 3);
   for (var i = 0; i < count; i++) {
     var r = 95 + Math.random() * 40, angle = Math.random() * Math.PI * 2;
-    pos[i*3] = Math.cos(angle) * r; pos[i*3+1] = THREE.Math.randFloatSpread(3); pos[i*3+2] = Math.sin(angle) * r;
+    pos[i*3] = Math.cos(angle) * r; pos[i*3+1] = THREE.MathUtils.randFloatSpread(3); pos[i*3+2] = Math.sin(angle) * r;
   }
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   kuiperBeltMesh = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x889aaa, size: 0.25, sizeAttenuation: true, transparent: true, opacity: 0.4, depthWrite: false, map: getParticleTexture() }));
   disableFrustumCulling(kuiperBeltMesh);
   freezeStaticObject(kuiperBeltMesh);
+  registerPointBudget(kuiperBeltMesh, 1, 0.35, 90, 3400);
   root.add(kuiperBeltMesh);
 
   // Pluto
@@ -934,12 +1172,13 @@ function setupKuiperBelt() {
   charonAnchor.add(charonMesh);
   allMoonRefs.push({ orbitPivot: charonPivot, mesh: charonMesh, material: charonMesh.material, orbitDays: 6.39, spinDays: 6.39, spin: 0, retrograde: false, name: "Charon" });
   var plutoObj = { def: { name: "Pluto", orbitDays: 90560, spinDays: -6.39, radius: 0.45 }, orbitPivot: plutoPivot, anchor: plutoAnchor, mesh: plutoMesh, material: plutoMesh.material, highlight: 0, spin: 0 };
+  plutoMesh.layers.enable(1);
   planets.push(plutoObj); pickables.push(plutoMesh); plutoMesh.userData.planet = plutoObj;
 }
 
 function setupMilkyWay() {
   galaxyGroup = new THREE.Group();
-  galaxyGroup.rotation.set(THREE.Math.degToRad(26), THREE.Math.degToRad(-14), THREE.Math.degToRad(8));
+  galaxyGroup.rotation.set(THREE.MathUtils.degToRad(26), THREE.MathUtils.degToRad(-14), THREE.MathUtils.degToRad(8));
   galaxyGroup.visible = false;
   scene.add(galaxyGroup);
 
@@ -948,8 +1187,8 @@ function setupMilkyWay() {
   for (var i = 0; i < armCount; i++) {
     var armIndex = i % 4, basePhase = armIndex * (Math.PI / 2);
     var radius = 240 + Math.pow(Math.random(), 0.68) * GALAXY_RADIUS;
-    var angle = basePhase + radius * 0.00095 + THREE.Math.randFloatSpread(0.32);
-    var thickness = THREE.Math.randFloatSpread(100) * (0.28 + radius / GALAXY_RADIUS);
+    var angle = basePhase + radius * 0.00095 + THREE.MathUtils.randFloatSpread(0.32);
+    var thickness = THREE.MathUtils.randFloatSpread(100) * (0.28 + radius / GALAXY_RADIUS);
     armPos[i*3] = Math.cos(angle) * radius; armPos[i*3+1] = thickness; armPos[i*3+2] = Math.sin(angle) * radius;
     var mix = Math.min(1, radius / GALAXY_RADIUS) * (0.4 + Math.random() * 0.6);
     armCol[i*3] = warm.r + (cool.r - warm.r) * mix;
@@ -962,6 +1201,7 @@ function setupMilkyWay() {
   milkyWayBand = new THREE.Points(armGeo, new THREE.PointsMaterial({ size: 6, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   disableFrustumCulling(milkyWayBand);
   freezeStaticObject(milkyWayBand);
+  registerPointBudget(milkyWayBand, 1, 0.55, GALAXY_REVEAL_START, UNIVERSE_REVEAL_START);
   galaxyGroup.add(milkyWayBand);
 
   // Galactic center bar
@@ -969,18 +1209,19 @@ function setupMilkyWay() {
   var barPos = new Float32Array(barCount * 3), barCol = new Float32Array(barCount * 3);
   for (var i = 0; i < barCount; i++) {
     var t = (Math.random() - 0.5) * 2;
-    barPos[i*3] = t * 3200 + THREE.Math.randFloatSpread(270);
-    barPos[i*3+1] = THREE.Math.randFloatSpread(60);
-    barPos[i*3+2] = THREE.Math.randFloatSpread(900) * (1 - Math.abs(t) * 0.5);
+    barPos[i*3] = t * 3200 + THREE.MathUtils.randFloatSpread(270);
+    barPos[i*3+1] = THREE.MathUtils.randFloatSpread(60);
+    barPos[i*3+2] = THREE.MathUtils.randFloatSpread(900) * (1 - Math.abs(t) * 0.5);
     var bright = 0.7 + Math.random() * 0.3;
     barCol[i*3] = bright; barCol[i*3+1] = 0.9 * bright; barCol[i*3+2] = 0.7 * bright;
   }
   barGeo.setAttribute("position", new THREE.BufferAttribute(barPos, 3));
   barGeo.setAttribute("color", new THREE.BufferAttribute(barCol, 3));
   var galacticBar = new THREE.Points(barGeo, new THREE.PointsMaterial({ size: 7, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0.05, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
-  galacticBar.rotation.y = THREE.Math.degToRad(30);
+  galacticBar.rotation.y = THREE.MathUtils.degToRad(30);
   disableFrustumCulling(galacticBar);
   freezeStaticObject(galacticBar);
+  registerPointBudget(galacticBar, 1, 0.55, GALAXY_REVEAL_START, UNIVERSE_REVEAL_START);
   galaxyGroup.add(galacticBar);
 
   galacticCenterGlow = new THREE.Mesh(new THREE.SphereGeometry(850, 16, 12),
@@ -1022,7 +1263,7 @@ function setupMilkyWay() {
   }
 
   // Solar system position
-  var solarAngle = THREE.Math.degToRad(224);
+  var solarAngle = THREE.MathUtils.degToRad(224);
   var solarPosition = new THREE.Vector3(Math.cos(solarAngle) * SOLAR_GALACTIC_RADIUS, 14, Math.sin(solarAngle) * SOLAR_GALACTIC_RADIUS);
   galaxyGroup.position.copy(solarPosition).multiplyScalar(-1);
 
@@ -1071,7 +1312,7 @@ function setupUniverse() {
   var violet = new THREE.Color(0xb7bcff), amber = new THREE.Color(0xffd2a8), cyan = new THREE.Color(0xa3d7ff);
   for (var i = 0; i < fieldCount; i++) {
     var r = 220000 + Math.pow(Math.random(), 0.56) * UNIVERSE_RADIUS;
-    var th = Math.random() * Math.PI * 2, ph = Math.acos(THREE.Math.randFloatSpread(2));
+    var th = Math.random() * Math.PI * 2, ph = Math.acos(THREE.MathUtils.randFloatSpread(2));
     fieldPos[i*3] = r*Math.sin(ph)*Math.cos(th); fieldPos[i*3+1] = r*Math.cos(ph); fieldPos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
     var m = Math.random(), mix = Math.random();
     if (m < 0.33) {
@@ -1090,30 +1331,32 @@ function setupUniverse() {
   universeField = new THREE.Points(fieldGeo, new THREE.PointsMaterial({ size: 820, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   disableFrustumCulling(universeField);
   freezeStaticObject(universeField);
+  registerPointBudget(universeField, 1, 0.6, UNIVERSE_REVEAL_START, UNIVERSE_REVEAL_FULL);
   universeGroup.add(universeField);
 
   // Cosmic web filaments
   var webGeo = new THREE.BufferGeometry(), webCount = 20000 * Q | 0, webPos = new Float32Array(webCount * 3);
   var filaments = [];
   for (var f = 0; f < 80; f++) {
-    var th1 = Math.random() * Math.PI * 2, ph1 = Math.acos(THREE.Math.randFloatSpread(2));
+    var th1 = Math.random() * Math.PI * 2, ph1 = Math.acos(THREE.MathUtils.randFloatSpread(2));
     var r1 = 500000 + Math.random() * UNIVERSE_RADIUS * 0.7;
     var s = new THREE.Vector3(r1*Math.sin(ph1)*Math.cos(th1), r1*Math.cos(ph1), r1*Math.sin(ph1)*Math.sin(th1));
-    var th2 = Math.random() * Math.PI * 2, ph2 = Math.acos(THREE.Math.randFloatSpread(2));
+    var th2 = Math.random() * Math.PI * 2, ph2 = Math.acos(THREE.MathUtils.randFloatSpread(2));
     var r2 = 500000 + Math.random() * UNIVERSE_RADIUS * 0.7;
     var e = new THREE.Vector3(r2*Math.sin(ph2)*Math.cos(th2), r2*Math.cos(ph2), r2*Math.sin(ph2)*Math.sin(th2));
     filaments.push({ start: s, end: e });
   }
   for (var i = 0; i < webCount; i++) {
     var fil = filaments[i % filaments.length], t = Math.random(), spread = 80000;
-    webPos[i*3] = fil.start.x + (fil.end.x - fil.start.x) * t + THREE.Math.randFloatSpread(spread);
-    webPos[i*3+1] = fil.start.y + (fil.end.y - fil.start.y) * t + THREE.Math.randFloatSpread(spread);
-    webPos[i*3+2] = fil.start.z + (fil.end.z - fil.start.z) * t + THREE.Math.randFloatSpread(spread);
+    webPos[i*3] = fil.start.x + (fil.end.x - fil.start.x) * t + THREE.MathUtils.randFloatSpread(spread);
+    webPos[i*3+1] = fil.start.y + (fil.end.y - fil.start.y) * t + THREE.MathUtils.randFloatSpread(spread);
+    webPos[i*3+2] = fil.start.z + (fil.end.z - fil.start.z) * t + THREE.MathUtils.randFloatSpread(spread);
   }
   webGeo.setAttribute("position", new THREE.BufferAttribute(webPos, 3));
   universeClusters = new THREE.Points(webGeo, new THREE.PointsMaterial({ color: 0xd8d0ff, size: 3000, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
   disableFrustumCulling(universeClusters);
   freezeStaticObject(universeClusters);
+  registerPointBudget(universeClusters, 1, 0.55, UNIVERSE_REVEAL_START, UNIVERSE_REVEAL_FULL);
   universeGroup.add(universeClusters);
 
   // Named galaxies
@@ -1143,14 +1386,14 @@ function setupUniverse() {
       var x, y, z;
       if (gd.irregular) {
         var gr = Math.random() * gd.size * 0.5, ga = Math.random() * Math.PI * 2;
-        x = Math.cos(ga) * gr + THREE.Math.randFloatSpread(gd.size * 0.2);
-        z = Math.sin(ga) * gr + THREE.Math.randFloatSpread(gd.size * 0.2);
-        y = THREE.Math.randFloatSpread(gd.size * 0.15);
+        x = Math.cos(ga) * gr + THREE.MathUtils.randFloatSpread(gd.size * 0.2);
+        z = Math.sin(ga) * gr + THREE.MathUtils.randFloatSpread(gd.size * 0.2);
+        y = THREE.MathUtils.randFloatSpread(gd.size * 0.15);
       } else {
         var arm = pi % 2, gr = Math.pow(Math.random(), 0.6) * gd.size * 0.5;
-        var spiral = gr * 0.0008 + arm * Math.PI, jitter = THREE.Math.randFloatSpread(0.4);
+        var spiral = gr * 0.0008 + arm * Math.PI, jitter = THREE.MathUtils.randFloatSpread(0.4);
         x = Math.cos(spiral + jitter) * gr; z = Math.sin(spiral + jitter) * gr;
-        y = THREE.Math.randFloatSpread(gd.size * 0.04);
+        y = THREE.MathUtils.randFloatSpread(gd.size * 0.04);
       }
       gPos[pi*3] = x; gPos[pi*3+1] = y; gPos[pi*3+2] = z;
       var bright = 0.6 + Math.random() * 0.4;
@@ -1161,6 +1404,7 @@ function setupUniverse() {
     var pts = new THREE.Points(gGeo, new THREE.PointsMaterial({ size: gd.size * 0.016, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: getParticleTexture() }));
     disableFrustumCulling(pts);
     freezeStaticObject(pts);
+    registerPointBudget(pts, 1, 0.6, UNIVERSE_REVEAL_START, UNIVERSE_REVEAL_FULL);
     group.add(pts);
     var gGlow = new THREE.Mesh(new THREE.SphereGeometry(gd.size * 0.12, 10, 8),
       new THREE.MeshBasicMaterial({ color: gd.color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -1199,6 +1443,18 @@ function setupUniverse() {
   freezeStaticObject(universeGroup);
 }
 
+function ensureGalaxyInitialized() {
+  if (galaxyInitialized) return;
+  setupMilkyWay();
+  galaxyInitialized = true;
+}
+
+function ensureUniverseInitialized() {
+  if (universeInitialized) return;
+  setupUniverse();
+  universeInitialized = true;
+}
+
 function loadEarthAssets() {
   Promise.all([
     loadTexture(EARTH_TEXTURES.day, true), loadTexture(EARTH_TEXTURES.normal, false),
@@ -1227,13 +1483,48 @@ function loadEarthAssets() {
 }
 
 function loadTexture(url, isColor) {
+  function finalizeTexture(tex) {
+    tex.anisotropy = maxAnisotropy;
+    tex.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    return tex;
+  }
+
+  function fallbackLoad(resolve) {
+    textureLoader.load(
+      url,
+      function(tex) {
+        resolve(finalizeTexture(tex));
+      },
+      undefined,
+      function() {
+        resolve(null);
+      }
+    );
+  }
+
   return new Promise(function(resolve) {
-    textureLoader.load(url, function(tex) {
-      tex.anisotropy = maxAnisotropy;
-      tex.encoding = isColor ? THREE.sRGBEncoding : THREE.LinearEncoding;
-      tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
-      resolve(tex);
-    }, undefined, function() { resolve(null); });
+    var tryCompressed = query.get("compressedTextures") !== "off" && !!ktx2Loader;
+    if (!tryCompressed) {
+      fallbackLoad(resolve);
+      return;
+    }
+
+    var ktxUrl = url
+      .replace("/assets/textures/planets/", "/assets/textures/planets/ktx2/")
+      .replace(/\.(png|jpg|jpeg)$/i, ".ktx2");
+
+    ktx2Loader.load(
+      ktxUrl,
+      function(tex) {
+        resolve(finalizeTexture(tex));
+      },
+      undefined,
+      function() {
+        fallbackLoad(resolve);
+      }
+    );
   });
 }
 
@@ -1264,7 +1555,7 @@ function makeTextSprite(text) {
   ctx.font = "700 56px Space Grotesk, Arial, sans-serif";
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(196,220,255,0.95)"; ctx.fillText(text, 512, 80);
-  var tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding;
+  var tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
   var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
   sprite.scale.set(2100, 330, 1);
   return sprite;
@@ -1317,6 +1608,42 @@ function applyLivePlanetPositions(unixMs) {
     p.orbitPivot.rotation.y = 0;
   }
 }
+
+function applyEphemerisSnapshot(snapshot) {
+  if (!snapshot || !snapshot.bodies) return;
+  for (var i = 0; i < planets.length; i++) {
+    var p = planets[i];
+    var coords = snapshot.bodies[p.def.name];
+    if (!coords) continue;
+    var orbital = ORBITAL_ELEMENTS[p.def.name];
+    var semimajor = orbital ? orbital.a0 : null;
+    if (!semimajor || !p.def.orbitRadius) continue;
+    var scale = p.def.orbitRadius / semimajor;
+    p.anchor.position.set(coords.x * scale, coords.z * scale, coords.y * scale);
+    p.orbitPivot.rotation.y = 0;
+  }
+}
+
+async function setDataMode(mode) {
+  dataMode = mode === "accurate" ? "accurate" : "educational";
+  if (dataModeInput) dataModeInput.value = dataMode;
+  if (dataMode === "accurate") {
+    try {
+      ephemerisSnapshot = await ephemerisStore.loadLatest();
+      applyEphemerisSnapshot(ephemerisSnapshot);
+      updateProvenancePanel("accurate", ephemerisSnapshot.source || "NASA JPL Horizons", ephemerisSnapshot.generatedAt);
+      emitTelemetry("ephemeris_mode", { mode: dataMode, source: ephemerisSnapshot.source, validAt: ephemerisSnapshot.validAt });
+      return;
+    } catch (error) {
+      captureError(error, "ephemeris.load");
+      dataMode = "educational";
+      if (dataModeInput) dataModeInput.value = dataMode;
+    }
+  }
+  ephemerisSnapshot = null;
+  updateProvenancePanel("educational", "Low-precision analytic elements", new Date().toISOString());
+}
+
 function setPositionMode(mode) {
   var previousMode = positionMode;
   positionMode = mode === POSITION_MODE_LIVE ? POSITION_MODE_LIVE : POSITION_MODE_SIM;
@@ -1324,7 +1651,8 @@ function setPositionMode(mode) {
 
   if (positionMode === POSITION_MODE_LIVE) {
     var liveNow = Date.now();
-    applyLivePlanetPositions(liveNow);
+    if (dataMode === "accurate" && ephemerisSnapshot) applyEphemerisSnapshot(ephemerisSnapshot);
+    else applyLivePlanetPositions(liveNow);
     lastLiveUpdateMs = liveNow;
     return;
   }
@@ -1344,7 +1672,7 @@ function setPositionMode(mode) {
 
 /* ---- UI ---- */
 function setupUI() {
-  // Planet nav — ordered by distance from Sun with AU values
+  // Planet nav  ordered by distance from Sun with AU values
   var navPlanets = [
     { name: "Mercury", au: "0.4", color: "#a4abae" },
     { name: "Venus",   au: "0.7", color: "#d5b079" },
@@ -1401,13 +1729,13 @@ function loadUIComponentVisibility() {
       defaults[key] = parsed[key] !== undefined ? !!parsed[key] : defaults[key];
     }
     return defaults;
-  } catch (err) {
+  } catch {
     return defaults;
   }
 }
 
 function saveUIComponentVisibility() {
-  try { localStorage.setItem(UI_COMPONENT_STORAGE_KEY, JSON.stringify(uiComponentsVisible)); } catch (err) {}
+  try { localStorage.setItem(UI_COMPONENT_STORAGE_KEY, JSON.stringify(uiComponentsVisible)); } catch {}
 }
 
 function setUIMenuOpen(open) {
@@ -1499,7 +1827,7 @@ function loadPerformanceMetricVisibility() {
       defaults[key] = parsed[key] !== undefined ? !!parsed[key] : true;
     }
     return defaults;
-  } catch (err) {
+  } catch {
     return defaults;
   }
 }
@@ -1509,16 +1837,16 @@ function loadPerformancePanelVisibility() {
     var raw = localStorage.getItem(PERFORMANCE_PANEL_STORAGE_KEY);
     if (raw === "0") return false;
     if (raw === "1") return true;
-  } catch (err) {}
+  } catch {}
   return true;
 }
 
 function savePerformanceMetricVisibility() {
-  try { localStorage.setItem(PERFORMANCE_METRIC_STORAGE_KEY, JSON.stringify(perfMetricsVisible)); } catch (err) {}
+  try { localStorage.setItem(PERFORMANCE_METRIC_STORAGE_KEY, JSON.stringify(perfMetricsVisible)); } catch {}
 }
 
 function savePerformancePanelVisibility() {
-  try { localStorage.setItem(PERFORMANCE_PANEL_STORAGE_KEY, perfPanelVisible ? "1" : "0"); } catch (err) {}
+  try { localStorage.setItem(PERFORMANCE_PANEL_STORAGE_KEY, perfPanelVisible ? "1" : "0"); } catch {}
 }
 
 function setPerformanceMenuOpen(open) {
@@ -1557,7 +1885,7 @@ function setAllPerformanceMetricVisibility(visible) {
 
 function setupPerformanceUI() {
   if (!perfShell || !perfPanel || !perfGrid || !perfMenu || !perfMenuList) return;
-  if (BENCHMARK_MODE) {
+  if (BENCHMARK_MODE || CI_VISUAL_MODE) {
     perfShell.classList.add("hidden");
     return;
   }
@@ -1573,6 +1901,7 @@ function setupPerformanceUI() {
     var row = document.createElement("div");
     row.className = "perf-metric";
     row.dataset.metric = def.key;
+    row.title = PERFORMANCE_METRIC_HELP[def.key] || "";
     var label = document.createElement("span");
     label.className = "perf-metric-label";
     label.textContent = def.label;
@@ -1704,6 +2033,8 @@ function samplePerformanceTelemetry(dtMs) {
   perfFrameElapsedMs += dtMs;
   perfFrameCount += 1;
   perfLastFrameMs = dtMs;
+  perfFrameSamples.push(dtMs);
+  if (perfFrameSamples.length > 240) perfFrameSamples.shift();
 }
 
 function updatePerformanceTelemetry(now, force, distanceToTarget) {
@@ -1717,9 +2048,16 @@ function updatePerformanceTelemetry(now, force, distanceToTarget) {
   var renderHeight = Math.round(window.innerHeight * currentPixelRatio);
   var distance = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
   var qualityLabel = qualityTier.toUpperCase() + (adaptiveResolutionEnabled ? " / ADAPT" : " / FIXED");
+  var sortedFrameSamples = perfFrameSamples.slice().sort(function(a, b) { return a - b; });
+  var frameP50 = percentileFromSorted(sortedFrameSamples, 50);
+  var frameP90 = percentileFromSorted(sortedFrameSamples, 90);
+  var frameP99 = percentileFromSorted(sortedFrameSamples, 99);
 
   updatePerformanceMetricValue("fps", fps.toFixed(1));
   updatePerformanceMetricValue("frame", perfLastFrameMs.toFixed(2) + " ms");
+  updatePerformanceMetricValue("frameP50", frameP50.toFixed(2) + " ms");
+  updatePerformanceMetricValue("frameP90", frameP90.toFixed(2) + " ms");
+  updatePerformanceMetricValue("frameP99", frameP99.toFixed(2) + " ms");
   updatePerformanceMetricValue("drawCalls", formatMetricCount(renderInfo.calls));
   updatePerformanceMetricValue("triangles", formatMetricCount(renderInfo.triangles));
   updatePerformanceMetricValue("points", formatMetricCount(renderInfo.points));
@@ -1830,6 +2168,19 @@ function updateUI(distanceToTarget) {
     }
     lastActivePlanetName = activePlanet;
   }
+
+  if (planetInfoDrawer && planetInfoTitle && planetInfoStats) {
+    if (selectedPlanet) {
+      planetInfoDrawer.classList.remove("hidden");
+      planetInfoTitle.textContent = selectedPlanet.def.name;
+      planetInfoStats.textContent =
+        "Radius: " + selectedPlanet.def.radius.toFixed(2) +
+        " | Orbit days: " + Math.round(selectedPlanet.def.orbitDays) +
+        " | Data: " + (dataMode === "accurate" ? "High Accuracy" : "Educational");
+    } else {
+      planetInfoDrawer.classList.add("hidden");
+    }
+  }
 }
 
 /* ---- Events ---- */
@@ -1843,6 +2194,11 @@ function setupEvents() {
   timeScaleInput.addEventListener("input", function() { timeWarpTarget = sliderToTimeWarp(Number(timeScaleInput.value)); });
   if (positionModeInput) {
     positionModeInput.addEventListener("change", function() { setPositionMode(positionModeInput.value); });
+  }
+  if (dataModeInput) {
+    dataModeInput.addEventListener("change", function() {
+      setDataMode(dataModeInput.value);
+    });
   }
   canvas.addEventListener("pointermove", function(e) { pointerInside = true; pointerMoved = true; pointerPx.set(e.clientX, e.clientY); updatePointer(e); });
   canvas.addEventListener("pointerdown", function(e) { pointerInside = true; pointerMoved = true; pointerDownPos = new THREE.Vector2(e.clientX, e.clientY); updatePointer(e); });
@@ -1866,7 +2222,7 @@ function setupEvents() {
       controlsDragging = false;
       scrubScaleFromClientX(e.clientX, false);
       if (scaleTrack.setPointerCapture) {
-        try { scaleTrack.setPointerCapture(e.pointerId); } catch (err) {}
+        try { scaleTrack.setPointerCapture(e.pointerId); } catch {}
       }
     });
     scaleTrack.addEventListener("pointermove", function(e) {
@@ -1879,7 +2235,7 @@ function setupEvents() {
       e.preventDefault();
       scaleScrubActive = false;
       if (scaleTrack.releasePointerCapture) {
-        try { scaleTrack.releasePointerCapture(e.pointerId); } catch (err) {}
+        try { scaleTrack.releasePointerCapture(e.pointerId); } catch {}
       }
     };
     scaleTrack.addEventListener("pointerup", endScaleScrub);
@@ -1895,9 +2251,36 @@ function setupEvents() {
   window.addEventListener("resize", onResize);
   if (window.visualViewport) window.visualViewport.addEventListener("resize", onResize);
   document.addEventListener("touchmove", function(e) { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "r" || e.key === "R") {
+      selectedPlanet = null;
+      selectedAngleIndex = 0;
+      startCameraTween(defaultCamPos, defaultTarget, 1200);
+    } else if ((e.key === "p" || e.key === "P") && uiComponentsVisible.performance !== false) {
+      setPerformancePanelVisibility(!perfPanelVisible);
+    } else if (e.key === "ArrowRight" && planets.length > 0) {
+      var idx = selectedPlanet ? planets.indexOf(selectedPlanet) : -1;
+      var next = planets[(idx + 1 + planets.length) % planets.length];
+      if (next) focusPlanet(next);
+    } else if (e.key === "ArrowLeft" && planets.length > 0) {
+      var idxPrev = selectedPlanet ? planets.indexOf(selectedPlanet) : 0;
+      var prev = planets[(idxPrev - 1 + planets.length) % planets.length];
+      if (prev) focusPlanet(prev);
+    }
+  });
   document.addEventListener("visibilitychange", function() {
     tabHidden = document.hidden;
     if (!tabHidden) clock.getDelta(); // drain accumulated delta after resume
+  });
+  canvas.addEventListener("webglcontextlost", function(event) {
+    event.preventDefault();
+    tabHidden = true;
+    emitTelemetry("webgl_context_lost", { reason: "context_lost" });
+  });
+  canvas.addEventListener("webglcontextrestored", function() {
+    tabHidden = false;
+    clock.getDelta();
+    emitTelemetry("webgl_context_restored", { restored: true });
   });
 }
 
@@ -1974,10 +2357,42 @@ function updateHover(distanceToTarget) {
   } else { tooltip.classList.add("hidden"); }
 }
 
+function updateBeltVisibility(dist) {
+  var asteroidVisible = dist < 500 && dist > 5;
+  if (asteroidBeltMesh && asteroidVisible !== lastAsteroidVisibleState) {
+    asteroidBeltMesh.visible = asteroidVisible;
+    lastAsteroidVisibleState = asteroidVisible;
+  }
+  var kuiperVisible = dist < 1000 && dist > 20;
+  if (kuiperBeltMesh && kuiperVisible !== lastKuiperVisibleState) {
+    kuiperBeltMesh.visible = kuiperVisible;
+    lastKuiperVisibleState = kuiperVisible;
+  }
+}
+
+function updateSolarDetailVisibility(dist) {
+  var solarDetailVisible = dist < SOLAR_DETAIL_HIDE_DIST;
+  if (!solarDetailVisible && lastSolarSystemDetailVisible !== false) {
+    for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = false; }
+    for (var oi = 0; oi < orbitLines.length; oi++) orbitLines[oi].visible = false;
+    lastSolarSystemDetailVisible = false;
+  } else if (solarDetailVisible && dist < SOLAR_DETAIL_SHOW_DIST && lastSolarSystemDetailVisible !== true) {
+    for (var sj = 0; sj < planets.length; sj++) { if (planets[sj].lod) planets[sj].lod.visible = true; }
+    for (var oj = 0; oj < orbitLines.length; oj++) orbitLines[oj].visible = true;
+    lastSolarSystemDetailVisible = true;
+  }
+}
+
 function updateScaleContext(distanceToTarget) {
   var dist = Number.isFinite(distanceToTarget) ? distanceToTarget : camera.position.distanceTo(controls.target);
   if (lastScaleDist >= 0 && Math.abs(dist - lastScaleDist) < 0.02) return;
   lastScaleDist = dist;
+  if (dist >= (GALAXY_REVEAL_START - GALAXY_VISIBILITY_MARGIN)) ensureGalaxyInitialized();
+  if (dist >= (UNIVERSE_REVEAL_START - UNIVERSE_VISIBILITY_MARGIN)) {
+    ensureGalaxyInitialized();
+    ensureUniverseInitialized();
+  }
+  updatePointBudgets(dist);
   var gA = THREE.MathUtils.clamp((dist - GALAXY_REVEAL_START) / (GALAXY_REVEAL_FULL - GALAXY_REVEAL_START), 0, 1);
   var uA = THREE.MathUtils.clamp((dist - UNIVERSE_REVEAL_START) / (UNIVERSE_REVEAL_FULL - UNIVERSE_REVEAL_START), 0, 1);
   var galaxyVisible = dist >= (GALAXY_REVEAL_START - GALAXY_VISIBILITY_MARGIN);
@@ -1998,26 +2413,8 @@ function updateScaleContext(distanceToTarget) {
   if (!gaChanged && !uaChanged) {
     // Still check visibility gating which is cheap
     if (useUnifiedVisibility) {
-      var asteroidVisible = dist < 500 && dist > 5;
-      if (asteroidBeltMesh && asteroidVisible !== lastAsteroidVisibleState) {
-        asteroidBeltMesh.visible = asteroidVisible;
-        lastAsteroidVisibleState = asteroidVisible;
-      }
-      var kuiperVisible = dist < 1000 && dist > 20;
-      if (kuiperBeltMesh && kuiperVisible !== lastKuiperVisibleState) {
-        kuiperBeltMesh.visible = kuiperVisible;
-        lastKuiperVisibleState = kuiperVisible;
-      }
-      var solarDetailVisible = dist < SOLAR_DETAIL_HIDE_DIST;
-      if (!solarDetailVisible && lastSolarSystemDetailVisible !== false) {
-        for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = false; }
-        for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = false;
-        lastSolarSystemDetailVisible = false;
-      } else if (solarDetailVisible && dist < SOLAR_DETAIL_SHOW_DIST && lastSolarSystemDetailVisible !== true) {
-        for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = true; }
-        for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = true;
-        lastSolarSystemDetailVisible = true;
-      }
+      updateBeltVisibility(dist);
+      updateSolarDetailVisibility(dist);
     }
     return;
   }
@@ -2045,27 +2442,8 @@ function updateScaleContext(distanceToTarget) {
   if (gaChanged && kuiperBeltMesh) kuiperBeltMesh.material.opacity = 0.4 * (1 - gA * 0.9);
 
   if (useUnifiedVisibility) {
-    var asteroidVisible = dist < 500 && dist > 5;
-    if (asteroidBeltMesh && asteroidVisible !== lastAsteroidVisibleState) {
-      asteroidBeltMesh.visible = asteroidVisible;
-      lastAsteroidVisibleState = asteroidVisible;
-    }
-    var kuiperVisible = dist < 1000 && dist > 20;
-    if (kuiperBeltMesh && kuiperVisible !== lastKuiperVisibleState) {
-      kuiperBeltMesh.visible = kuiperVisible;
-      lastKuiperVisibleState = kuiperVisible;
-    }
-    // Hide solar system detail (planet LODs, orbits) at galaxy+ distances
-    var solarDetailVisible = dist < SOLAR_DETAIL_HIDE_DIST;
-    if (!solarDetailVisible && lastSolarSystemDetailVisible !== false) {
-      for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = false; }
-      for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = false;
-      lastSolarSystemDetailVisible = false;
-    } else if (solarDetailVisible && dist < SOLAR_DETAIL_SHOW_DIST && lastSolarSystemDetailVisible !== true) {
-      for (var si = 0; si < planets.length; si++) { if (planets[si].lod) planets[si].lod.visible = true; }
-      for (var si = 0; si < orbitLines.length; si++) orbitLines[si].visible = true;
-      lastSolarSystemDetailVisible = true;
-    }
+    updateBeltVisibility(dist);
+    updateSolarDetailVisibility(dist);
   }
 
   if (universeVisible && uaChanged) {
@@ -2107,14 +2485,8 @@ function updateParticleVisibilityLegacy(distanceToTarget) {
     if (universeGroup) universeGroup.visible = shouldShowUniverse;
   }
 
-  if (asteroidBeltMesh) {
-    var beltVisible = dist < 500 && dist > 5;
-    if (asteroidBeltMesh.visible !== beltVisible) asteroidBeltMesh.visible = beltVisible;
-  }
-  if (kuiperBeltMesh) {
-    var kuiperVisible = dist < 1000 && dist > 20;
-    if (kuiperBeltMesh.visible !== kuiperVisible) kuiperBeltMesh.visible = kuiperVisible;
-  }
+  updateBeltVisibility(dist);
+  updateSolarDetailVisibility(dist);
 }
 
 function maybeAdjustResolution(dtMs) {
@@ -2164,12 +2536,15 @@ function animate(now) {
   samplePerformanceTelemetry(dtMs);
   var cameraDistance = camera.position.distanceTo(controls.target);
   var simDays = 0;
-  if (positionMode === POSITION_MODE_SIM) {
-    // Smooth interpolation toward target speed — prevents jerky jumps
+  if (STATIC_FRAME_MODE) {
+    simDays = 0;
+  } else if (positionMode === POSITION_MODE_SIM) {
+    // Smooth interpolation toward target speed  prevents jerky jumps
     timeWarp += (timeWarpTarget - timeWarp) * (1 - Math.exp(-dt * 8));
     simDays = dt * timeWarp;
   } else if (!lastLiveUpdateMs || (nowMs - lastLiveUpdateMs) >= LIVE_UPDATE_INTERVAL_MS) {
-    applyLivePlanetPositions(nowMs);
+    if (dataMode === "accurate" && ephemerisSnapshot) applyEphemerisSnapshot(ephemerisSnapshot);
+    else applyLivePlanetPositions(nowMs);
     lastLiveUpdateMs = nowMs;
   }
   hoverElapsedMs += dtMs;
@@ -2196,12 +2571,19 @@ function animate(now) {
         p.mesh.rotation.y = spin * spinSignLive;
       }
       if (p.clouds) p.clouds.rotation.y += simDays * 0.15;
-      if (p.atmosphere) p.atmosphere.rotation.y += dt * 0.02;
+      if (p.atmosphere && !STATIC_FRAME_MODE) p.atmosphere.rotation.y += dt * 0.02;
       var h = hoveredPlanet === p ? 1 : selectedPlanet === p ? 0.7 : 0;
       p.highlight += (h - p.highlight) * (1 - Math.exp(-dt * 10));
       var scale = 1 + p.highlight * 0.085;
-      p.mesh.scale.set(scale, scale, scale);
-      p.material.emissiveIntensity = 0.05 + p.highlight * 0.3;
+      if (Math.abs(scale - p.lastScale) > OPACITY_EPSILON) {
+        p.mesh.scale.set(scale, scale, scale);
+        p.lastScale = scale;
+      }
+      var emissive = 0.05 + p.highlight * 0.3;
+      if (Math.abs(emissive - p.lastEmissive) > OPACITY_EPSILON) {
+        p.material.emissiveIntensity = emissive;
+        p.lastEmissive = emissive;
+      }
     }
 
     for (var i = 0; i < allMoonRefs.length; i++) {
@@ -2239,9 +2621,9 @@ function animate(now) {
     updateUI(cameraDistance);
     uiElapsedMs = 0;
   }
-  controls.autoRotate = !selectedPlanet && !cameraTween && !controlsDragging;
+  controls.autoRotate = !STATIC_FRAME_MODE && !autoRotateDisabled && !selectedPlanet && !cameraTween && !controlsDragging;
   controls.update();
-  maybeAdjustResolution(dtMs);
+  if (!STATIC_FRAME_MODE) maybeAdjustResolution(dtMs);
   renderer.render(scene, camera);
   if (BENCHMARK_MODE && !benchmarkDone) {
     var benchElapsed = rafNow - benchmarkStartedAt;
@@ -2261,4 +2643,8 @@ function animate(now) {
   updatePerformanceTelemetry(rafNow, false, cameraDistance);
 }
 
+setDataMode(dataMode).catch(function(error) { captureError(error, "data-mode.init"); });
 setPositionMode(positionMode);
+
+
+

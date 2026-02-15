@@ -1,0 +1,17 @@
+﻿{
+  "source": "JPL Horizons snapshot (placeholder format; regenerate with scripts/fetch-horizons.mjs)",
+  "generatedAt": "2026-02-14T00:00:00.000Z",
+  "validAt": "2026-02-14T00:00:00.000Z",
+  "coordinateFrame": "heliocentric-au",
+  "bodies": {
+    "Mercury": { "x": -0.2503, "y": 0.1988, "z": 0.0402 },
+    "Venus": { "x": 0.7191, "y": 0.0435, "z": -0.0411 },
+    "Earth": { "x": -0.9104, "y": 0.3712, "z": -0.0002 },
+    "Mars": { "x": -1.1125, "y": 1.1227, "z": 0.0538 },
+    "Jupiter": { "x": -4.6531, "y": -1.9627, "z": 0.1138 },
+    "Saturn": { "x": 8.5332, "y": -4.3822, "z": -0.2746 },
+    "Uranus": { "x": 13.0626, "y": 13.9223, "z": -0.1142 },
+    "Neptune": { "x": 29.7255, "y": -1.2462, "z": -0.6401 },
+    "Pluto": { "x": 18.1384, "y": -31.7554, "z": -1.6808 }
+  }
+}
