@@ -259,7 +259,7 @@ var dataMode = dataModeInput ? dataModeInput.value : "educational";
 var ephemerisSnapshot = null;
 const selectedCameraOffset = new THREE.Vector3();
 const selectedCameraTarget = new THREE.Vector3();
-const v1 = new THREE.Vector3(), v2 = new THREE.Vector3();
+const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3();
 const defaultCamPos = new THREE.Vector3(0, 40, 170);
 const defaultTarget = new THREE.Vector3(0, 0, 0);
 const viewAngles = [
@@ -2295,6 +2295,11 @@ function focusPlanet(planet) {
   else { selectedPlanet = planet; selectedAngleIndex = 0; }
   var target = planet.mesh.getWorldPosition(v1).clone();
   var dir = viewAngles[selectedAngleIndex].clone().normalize();
+  // Bias initial focus toward the sunlit hemisphere so details are visible.
+  if (selectedAngleIndex === 0) {
+    var toSun = v3.copy(target).multiplyScalar(-1).normalize();
+    if (dir.dot(toSun) < 0.15) dir.multiplyScalar(-1);
+  }
   var dist = Math.max(planet.def.radius * 6.6, 9.2);
   var pos = target.clone().add(dir.multiplyScalar(dist));
   pos.y += planet.def.radius * 0.45;
