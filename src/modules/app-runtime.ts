@@ -269,6 +269,8 @@ const viewAngles = [
 
 const pickables = [], planets = [], orbitLines = [], allMoonRefs = [];
 let earthPlanetRef = null;
+let earthFillLight = null;
+let earthFillLightTarget = null;
 let galaxyGroup = null, milkyWayBand = null, galacticCenterGlow = null;
 let solarSystemMarker = null, solarSystemLabel = null;
 let universeGroup = null, universeField = null, universeClusters = null;
@@ -815,6 +817,14 @@ function setupLighting() {
   scene.add(new THREE.AmbientLight(0x2a3652, 0.2));
   scene.add(new THREE.HemisphereLight(0x688fc0, 0x090f1e, 0.16));
   root.add(new THREE.PointLight(0xfff0c0, 4.5, 0, 2));
+
+  // Keep Earth visibly lit from the viewer side by using an Earth-only fill light.
+  earthFillLightTarget = new THREE.Object3D();
+  scene.add(earthFillLightTarget);
+  earthFillLight = new THREE.DirectionalLight(0xffffff, 1.8);
+  earthFillLight.layers.set(2);
+  earthFillLight.target = earthFillLightTarget;
+  scene.add(earthFillLight);
 }
 
 function setupBackgroundStars() {
@@ -870,6 +880,7 @@ function setupPlanets() {
   var moonOrbitLineMat = new THREE.LineBasicMaterial({ color: 0x5a6e8a, transparent: true, opacity: 0.25 });
   for (var di = 0; di < defs.length; di++) {
     var def = defs[di];
+    var isEarth = def.name === "Earth";
     var orbitLine = createOrbit(def.orbitRadius, orbitLineMat);
     root.add(orbitLine); orbitLines.push(orbitLine);
     var orbitPivot = new THREE.Object3D();
@@ -899,18 +910,21 @@ function setupPlanets() {
     // High detail (close view)
     var highGeo = new THREE.SphereGeometry(def.radius, PLANET_SEGMENTS, PLANET_SEGMENTS);
     var highMesh = new THREE.Mesh(highGeo, material);
+    if (isEarth) highMesh.layers.enable(2);
     highMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(highMesh, 0);
     
     // Medium detail (medium distance)
     var medGeo = new THREE.SphereGeometry(def.radius, mediumSegments, mediumSegments);
     var medMesh = new THREE.Mesh(medGeo, material);
+    if (isEarth) medMesh.layers.enable(2);
     medMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(medMesh, midDistance);
     
     // Low detail (far view)
     var lowGeo = new THREE.SphereGeometry(def.radius, lowSegments, lowSegments);
     var lowMesh = new THREE.Mesh(lowGeo, material);
+    if (isEarth) lowMesh.layers.enable(2);
     lowMesh.rotation.z = THREE.MathUtils.degToRad(def.tilt);
     lod.addLevel(lowMesh, lowDistance);
     
@@ -980,7 +994,8 @@ function setupPlanets() {
       planetMesh.add(ring);
     }
 
-    var planet = { def: def, orbitPivot: orbitPivot, anchor: anchor, mesh: planetMesh, lod: lod, clouds: cloudMesh, atmosphere: atmosphereMesh, material: material, highlight: 0, spin: Math.random() * Math.PI * 2, lastScale: 1, lastEmissive: 0.05 };
+    var baseEmissive = isEarth ? 0.16 : 0.05;
+    var planet = { def: def, orbitPivot: orbitPivot, anchor: anchor, mesh: planetMesh, lod: lod, clouds: cloudMesh, atmosphere: atmosphereMesh, material: material, highlight: 0, spin: Math.random() * Math.PI * 2, lastScale: 1, lastEmissive: baseEmissive };
     planetMesh.userData.planet = planet;
     planets.push(planet);
     if (def.name === "Earth") earthPlanetRef = planet;
@@ -1464,10 +1479,19 @@ function loadEarthAssets() {
     var day = textures[0], normal = textures[1], specular = textures[2], lights = textures[3], clouds = textures[4], moonTex = textures[5];
     if (!earthPlanetRef) return;
     var em = earthPlanetRef.material;
-    if (day) { em.map = day; em.color.setHex(0xffffff); }
+    if (day) {
+      em.map = day;
+      em.color.setHex(0xffffff);
+      // Keep Earth details readable even when the sun is behind the planet.
+      em.emissiveMap = day;
+      em.emissive = new THREE.Color(0xffffff);
+    }
     if (normal) { em.normalMap = normal; em.normalScale = new THREE.Vector2(0.8, 0.8); }
     if (specular) { em.roughnessMap = specular; em.roughness = 0.53; }
-    if (lights) { em.emissiveMap = lights; em.emissive = new THREE.Color(0x9fc3ff); em.emissiveIntensity = 0.32; }
+    if (lights) {
+      em.userData = em.userData || {};
+      em.userData.nightLightsMap = lights;
+    }
     em.needsUpdate = true;
     if (earthPlanetRef.clouds && clouds) {
       var cm = earthPlanetRef.clouds.material; cm.map = clouds; cm.alphaMap = clouds; cm.opacity = 0.52; cm.needsUpdate = true;
@@ -2494,6 +2518,17 @@ function updateParticleVisibilityLegacy(distanceToTarget) {
   updateSolarDetailVisibility(dist);
 }
 
+function updateEarthAlwaysLit() {
+  if (!earthPlanetRef || !earthFillLight || !earthFillLightTarget) return;
+  var earthPos = earthPlanetRef.mesh.getWorldPosition(v3);
+  var toCamera = v1.copy(camera.position).sub(earthPos);
+  if (toCamera.lengthSq() < 1e-8) toCamera.set(0, 0, 1);
+  toCamera.normalize();
+  var lightDistance = Math.max(18, earthPlanetRef.def.radius * 16);
+  earthFillLight.position.copy(earthPos).add(toCamera.multiplyScalar(lightDistance));
+  earthFillLightTarget.position.copy(earthPos);
+}
+
 function maybeAdjustResolution(dtMs) {
   if (!adaptiveResolutionEnabled) return;
 
@@ -2584,7 +2619,9 @@ function animate(now) {
         p.mesh.scale.set(scale, scale, scale);
         p.lastScale = scale;
       }
-      var emissive = 0.05 + p.highlight * 0.3;
+      var emissiveBase = p.def.name === "Earth" ? 0.16 : 0.05;
+      var emissiveBoost = p.def.name === "Earth" ? 0.22 : 0.3;
+      var emissive = emissiveBase + p.highlight * emissiveBoost;
       if (Math.abs(emissive - p.lastEmissive) > OPACITY_EPSILON) {
         p.material.emissiveIntensity = emissive;
         p.lastEmissive = emissive;
@@ -2628,6 +2665,7 @@ function animate(now) {
   }
   controls.autoRotate = !STATIC_FRAME_MODE && !autoRotateDisabled && !selectedPlanet && !cameraTween && !controlsDragging;
   controls.update();
+  updateEarthAlwaysLit();
   if (!STATIC_FRAME_MODE) maybeAdjustResolution(dtMs);
   renderer.render(scene, camera);
   if (BENCHMARK_MODE && !benchmarkDone) {
