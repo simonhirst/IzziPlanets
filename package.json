@@ -13,8 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:visual": "playwright test",
+    "check:bundle": "node scripts/check-bundle-size.mjs",
     "lighthouse": "lhci autorun --config=lighthouserc.json",
-    "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build && npm run check:bundle"
   },
   "keywords": [
     "threejs",
